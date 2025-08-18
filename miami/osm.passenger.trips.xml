@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <vType id="car" length="5" minGap="2.5" maxSpeed="30" guiShape="passenger"/>
+    
+    <trip id="vehicle_0" type="car" depart="0" 
+          from="-1032740975" to="-1011729120#5" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_1" type="car" depart="10" 
+          from="-1032740970" to="-1011526412#6" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_2" type="car" depart="20" 
+          from="-1032740314#1" to="-1011526412#3" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_3" type="car" depart="30" 
+          from="-1011118521#2" to="-1011118521#7" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_4" type="car" depart="40" 
+          from="-1032740972#0" to="-1011729119" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_5" type="car" depart="50" 
+          from="-1032740971#0" to="-1011526412#5" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_6" type="car" depart="60" 
+          from="-1002939002#0" to="-1011118521#9" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_7" type="car" depart="70" 
+          from="-1011118521#16" to="-1026429080" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_8" type="car" depart="80" 
+          from="-1011729120#2" to="-1011729120#4" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_9" type="car" depart="90" 
+          from="-1011118522#0" to="-1030798708#0" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_10" type="car" depart="100" 
+          from="-1011526412#4" to="-1011526412#14" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_11" type="car" depart="110" 
+          from="-1011118521#4" to="-1030724673" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_12" type="car" depart="120" 
+          from="-1032740973#1" to="-1032740974" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_13" type="car" depart="130" 
+          from="-1011526412#13" to="-1011118521#0" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_14" type="car" depart="140" 
+          from="-1032740314#0" to="-1011729120#3" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_15" type="car" depart="150" 
+          from="-1011526412#0" to="-1011118521#7" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_16" type="car" depart="160" 
+          from="-1014556483#1" to="-1011118521#14" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_17" type="car" depart="170" 
+          from="-1011118521#1" to="-1011526412#7" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_18" type="car" depart="180" 
+          from="-1011729119" to="-1011118521#8" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_19" type="car" depart="190" 
+          from="-1032740314#1" to="-1011729120#3" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_20" type="car" depart="200" 
+          from="-1032740971#0" to="-1011118522#0" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_21" type="car" depart="210" 
+          from="-1011118521#8" to="-1014056016" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_22" type="car" depart="220" 
+          from="-1030798708#1" to="-1032740969#1" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_23" type="car" depart="230" 
+          from="-1011739620#2" to="-1011118521#7" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_24" type="car" depart="240" 
+          from="-1032740973#0" to="-1011118521#4" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_25" type="car" depart="250" 
+          from="-1011729120#10" to="-1036462244#1" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_26" type="car" depart="260" 
+          from="-1011729120#10" to="-1011118521#5" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_27" type="car" depart="270" 
+          from="-1032740971#0" to="-1011118521#17" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_28" type="car" depart="280" 
+          from="-1011729120#5" to="-1011118521#10" 
+          departLane="best" departSpeed="max"/>
+    <trip id="vehicle_29" type="car" depart="290" 
+          from="-1032740973#1" to="-1011729120#0" 
+          departLane="best" departSpeed="max"/>
+</routes>

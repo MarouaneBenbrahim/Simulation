@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SUMO x PyPSA - Traffic & Power Grid Simulation</title>
+    
+    <!-- Leaflet CSS and JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.min.js"></script>
+    
+    <!-- Chart.js for power demand visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: Arial, sans-serif;
+        }
+        #map { 
+            position: absolute; 
+            top: 0; 
+            bottom: 0; 
+            width: 100%; 
+            height: 100vh; 
+        }
+        .car-marker {
+            width: 8px;
+            height: 18px;
+        }
+        .leaflet-marker-icon {
+            transition: transform 0.05s linear, left 0.05s linear, top 0.05s linear;
+            will-change: transform, left, top;
+        }
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 5px;
+            z-index: 1000;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+            min-width: 200px;
+        }
+        
+        /* ========== NEW POWER PANEL STYLES ========== */
+        .power-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 5px;
+            z-index: 1000;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+            min-width: 250px;
+            max-width: 300px;
+        }
+        
+        .power-metrics {
+            margin-top: 10px;
+        }
+        
+        .power-metric {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            padding: 5px;
+            background: #f5f5f5;
+            border-radius: 3px;
+        }
+        
+        .power-metric-label {
+            font-weight: 500;
+            color: #333;
+        }
+        
+        .power-metric-value {
+            font-weight: bold;
+            color: #2196F3;
+        }
+        
+        .grid-status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            text-align: center;
+            font-weight: bold;
+        }
+        
+        .grid-status.operational {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        .grid-status.congested {
+            background-color: #ff9800;
+            color: white;
+        }
+        
+        .grid-status.critical {
+            background-color: #f44336;
+            color: white;
+        }
+        
+        .charging-station-icon {
+            width: 20px;
+            height: 20px;
+            background-color: #2196F3;
+            border: 3px solid white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: white;
+            font-size: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+        
+        .charging-station-icon.available {
+            background-color: #4CAF50;
+        }
+        
+        .charging-station-icon.busy {
+            background-color: #ff9800;
+        }
+        
+        .charging-station-icon.full {
+            background-color: #f44336;
+        }
+        
+        .power-chart-container {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background-color: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 5px;
+            z-index: 1000;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+            width: 400px;
+            height: 200px;
+        }
+        
+        #powerChart {
+            width: 100% !important;
+            height: 160px !important;
+        }
+        
+        .legend-item {
+            display: inline-block;
+            margin-right: 15px;
+            font-size: 12px;
+        }
+        
+        .legend-color {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            margin-right: 5px;
+            vertical-align: middle;
+        }
+        /* ========== END NEW STYLES ========== */
+        
+        .control-panel h3, .power-panel h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        .control-panel button {
+            margin-top: 10px;
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            width: 100%;
+        }
+        .control-panel button:hover {
+            background-color: #45a049;
+        }
+        .control-panel button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .stat-item {
+            margin: 5px 0;
+            display: flex;
+            justify-content: space-between;
+        }
+        select {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border-radius: 3px;
+            border: 1px solid #ddd;
+        }
+        .city-marker {
+            width: 12px;
+            height: 12px;
+            background-color: #ff4444;
+            border: 2px solid white;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .traffic-light {
+            width: 12px;
+            height: 12px;
+            border: 2px solid #333;
+            border-radius: 50%;
+            transition: background-color 0.3s ease;
+        }
+        .traffic-light.red {
+            background-color: #ff0000;
+            box-shadow: 0 0 10px #ff0000;
+        }
+        .traffic-light.yellow {
+            background-color: #ffff00;
+            box-shadow: 0 0 10px #ffff00;
+        }
+        .traffic-light.green {
+            background-color: #00ff00;
+            box-shadow: 0 0 10px #00ff00;
+        }
+        .traffic-light.off {
+            background-color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <!-- Traffic Control Panel (existing) -->
+    <div class="control-panel">
+        <h3>Simulation Controls</h3>
+        <select id="citySelector" class="form-select">
+            <option value="">Select a city...</option>
+            <option value="newyork">New York, USA</option>
+            <option value="miami">Miami, USA</option>
+            <option value="losangeles">Los Angeles, USA</option>
+        </select>
+        <div class="stat-item">
+            <span>Time Step:</span>
+            <span id="time-step">0</span>
+        </div>
+        <div class="stat-item">
+            <span>Total Vehicles:</span>
+            <span id="total-vehicles">0</span>
+        </div>
+        <div class="stat-item">
+            <span>Active Vehicles:</span>
+            <span id="active-vehicles">0</span>
+        </div>
+        <button id="start-btn" disabled>Start Simulation</button>
+        <button id="restart-btn" style="display: none;">Restart Simulation</button>
+    </div>
+    
+    <!-- ========== NEW POWER PANEL ========== -->
+    <div class="power-panel">
+        <h3>⚡ Power Grid Status</h3>
+        <div id="grid-status" class="grid-status operational">
+            GRID OPERATIONAL
+        </div>
+        
+        <div class="power-metrics">
+            <div class="power-metric">
+                <span class="power-metric-label">Total Demand:</span>
+                <span class="power-metric-value" id="total-demand">0 MW</span>
+            </div>
+            <div class="power-metric">
+                <span class="power-metric-label">Traffic Lights:</span>
+                <span class="power-metric-value" id="tl-demand">0 MW</span>
+            </div>
+            <div class="power-metric">
+                <span class="power-metric-label">EV Charging:</span>
+                <span class="power-metric-value" id="ev-demand">0 MW</span>
+            </div>
+            <div class="power-metric">
+                <span class="power-metric-label">Street Lighting:</span>
+                <span class="power-metric-value" id="street-demand">0 MW</span>
+            </div>
+            <div class="power-metric">
+                <span class="power-metric-label">Grid Congestion:</span>
+                <span class="power-metric-value" id="grid-congestion">0%</span>
+            </div>
+        </div>
+        
+        <div style="margin-top: 15px;">
+            <h4 style="margin: 5px 0;">Legend:</h4>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #2196F3;"></span>
+                EV Charging Station
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #4CAF50;"></span>
+                Available
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #ff9800;"></span>
+                Busy
+            </div>
+        </div>
+    </div>
+    
+    <!-- Power Demand Chart -->
+    <div class="power-chart-container">
+        <h4 style="margin: 0 0 10px 0;">Power Demand History</h4>
+        <canvas id="powerChart"></canvas>
+    </div>
+    <!-- ========== END NEW POWER PANEL ========== -->
+    
+    <script>
+        // City coordinates
+        const cityConfigs = {
+            newyork: { lat: 40.7128, lng: -74.0060, zoom: 15 },
+            miami: { lat: 25.7617, lng: -80.1918, zoom: 15 },
+            losangeles: { lat: 34.0522, lng: -118.2437, zoom: 15 }
+        };
+        
+        // Get the current city from dropdown
+        const citySelector = document.getElementById('citySelector');
+        let currentCity = citySelector.value;
+        
+        // Initialize the Leaflet map with USA view
+        const map = L.map('map').setView([39.8283, -98.5795], 4);
+        
+        // Add OpenStreetMap tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // Add city markers
+        Object.entries(cityConfigs).forEach(([city, coords]) => {
+            const marker = L.circleMarker([coords.lat, coords.lng], {
+                radius: 8,
+                fillColor: "#ff4444",
+                color: "#fff",
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).addTo(map);
+            
+            marker.bindPopup(city.charAt(0).toUpperCase() + city.slice(1));
+            
+            marker.on('click', () => {
+                citySelector.value = city;
+                handleCitySelection();
+            });
+        });
+
+        const markers = {};
+        const carIcon = L.icon({
+            iconUrl: '/static/car-icon.PNG',
+            iconSize: [8, 18],
+            iconAnchor: [4, 9],
+        });
+
+        // Traffic light markers
+        const trafficLightMarkers = {};
+        
+        // ========== NEW: Charging station markers ==========
+        const chargingStationMarkers = {};
+        
+        // Create traffic light icon with color
+        function createTrafficLightIcon(color) {
+            return L.divIcon({
+                className: `traffic-light ${color}`,
+                iconSize: [6, 6],
+                iconAnchor: [3, 3]
+            });
+        }
+        
+        // Create charging station icon
+        function createChargingStationIcon(vehiclesCharging, capacity) {
+            const utilization = capacity > 0 ? vehiclesCharging / capacity : 0;
+            let statusClass = 'available';
+            if (utilization >= 1) statusClass = 'full';
+            else if (utilization > 0) statusClass = 'busy';
+            
+            return L.divIcon({
+                className: `charging-station-icon ${statusClass}`,
+                html: `⚡`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            });
+        }
+
+        // UI elements
+        const timeStepElement = document.getElementById('time-step');
+        const totalVehiclesElement = document.getElementById('total-vehicles');
+        const activeVehiclesElement = document.getElementById('active-vehicles');
+        const startButton = document.getElementById('start-btn');
+        const restartButton = document.getElementById('restart-btn');
+        
+        // ========== NEW: Power UI elements ==========
+        const totalDemandElement = document.getElementById('total-demand');
+        const tlDemandElement = document.getElementById('tl-demand');
+        const evDemandElement = document.getElementById('ev-demand');
+        const streetDemandElement = document.getElementById('street-demand');
+        const gridCongestionElement = document.getElementById('grid-congestion');
+        const gridStatusElement = document.getElementById('grid-status');
+        
+        // Stats
+        let totalVehicles = 0;
+        let timeStep = 0;
+        let simulationStarted = false;
+        
+        // ========== NEW: Power demand chart setup ==========
+        const ctx = document.getElementById('powerChart').getContext('2d');
+        const powerChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Total Demand',
+                        data: [],
+                        borderColor: '#2196F3',
+                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                        tension: 0.4
+                    },
+                    {
+                        label: 'EV Charging',
+                        data: [],
+                        borderColor: '#4CAF50',
+                        backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                        tension: 0.4
+                    },
+                    {
+                        label: 'Traffic Lights',
+                        data: [],
+                        borderColor: '#ff9800',
+                        backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom'
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Power (MW)'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time Steps'
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Connect to the server
+        const socket = io();
+        
+        function handleCitySelection() {
+            currentCity = citySelector.value;
+            if (currentCity) {
+                // Update map view to selected city
+                map.setView(
+                    [cityConfigs[currentCity].lat, cityConfigs[currentCity].lng],
+                    cityConfigs[currentCity].zoom
+                );
+                startButton.disabled = false;
+            } else {
+                // Reset to USA view
+                map.setView([39.8283, -98.5795], 4);
+                startButton.disabled = true;
+            }
+        }
+        
+        // Handle city selection change
+        citySelector.addEventListener('change', handleCitySelection);
+        
+        // Handle start button
+        startButton.addEventListener('click', function() {
+            if (!simulationStarted) {
+                // Start simulation
+                socket.emit('change_city', { city: currentCity });
+                simulationStarted = true;
+                startButton.style.display = 'none';
+                restartButton.style.display = 'block';
+            }
+        });
+        
+        // Reset simulation stats and markers
+        function resetSimulation() {
+            timeStep = 0;
+            totalVehicles = 0;
+            timeStepElement.textContent = '0';
+            totalVehiclesElement.textContent = '0';
+            activeVehiclesElement.textContent = '0';
+            
+            // Clear all vehicle markers from the map
+            for (const id in markers) {
+                markers[id].remove();
+                delete markers[id];
+            }
+            
+            // Clear all traffic light markers from the map
+            for (const id in trafficLightMarkers) {
+                trafficLightMarkers[id].remove();
+                delete trafficLightMarkers[id];
+            }
+            
+            // Clear charging station markers
+            for (const id in chargingStationMarkers) {
+                chargingStationMarkers[id].remove();
+                delete chargingStationMarkers[id];
+            }
+            
+            // Reset power chart
+            powerChart.data.labels = [];
+            powerChart.data.datasets.forEach(dataset => {
+                dataset.data = [];
+            });
+            powerChart.update();
+        }
+        
+        // Update simulation data
+        socket.on('update', (data) => {
+            console.log("Received update:", data);
+            // Handle both old format (just vehicles) and new format
+            const vehicles = data.vehicles || data;
+            const traffic_lights = data.traffic_lights || [];
+            const powerData = data.power || null;
+            
+            // Update the time step
+            timeStep++;
+            timeStepElement.textContent = timeStep;
+            
+            // Update vehicle counts
+            activeVehiclesElement.textContent = vehicles.length;
+            if (vehicles.length > 0 && totalVehicles < vehicles.length) {
+                totalVehicles = Math.max(totalVehicles, vehicles.length);
+                totalVehiclesElement.textContent = totalVehicles;
+            }
+            
+            // Track vehicles that need to be removed
+            const activeVehicleIds = vehicles.map(v => v.id);
+            Object.keys(markers).forEach(id => {
+                if (!activeVehicleIds.includes(id)) {
+                    markers[id].remove();
+                    delete markers[id];
+                }
+            });
+            
+            // Update vehicle positions on the map
+            vehicles.forEach(vehicle => {
+                if (!markers[vehicle.id]) {
+                    // Create new marker
+                    markers[vehicle.id] = L.marker([vehicle.y, vehicle.x], {
+                        icon: carIcon
+                    }).addTo(map);
+                    
+                    // Initial rotation
+                    const icon = markers[vehicle.id].getElement();
+                    if (icon) {
+                        icon.style.transform = `${icon.style.transform} rotate(${vehicle.angle}deg)`;
+                    }
+                } else {
+                    // Update existing marker position
+                    markers[vehicle.id].setLatLng([vehicle.y, vehicle.x]);
+                    
+                    // Update rotation
+                    const icon = markers[vehicle.id].getElement();
+                    if (icon) {
+                        let currentTransform = icon.style.transform || '';
+                        currentTransform = currentTransform.replace(/\s*rotate\([^)]*\)/g, '');
+                        icon.style.transform = `${currentTransform} rotate(${vehicle.angle}deg)`;
+                    }
+                }
+            });
+            
+            // Handle traffic lights
+            const activeTrafficLightIds = traffic_lights.map(tl => tl.id);
+            
+            // Remove traffic lights that are no longer active
+            Object.keys(trafficLightMarkers).forEach(id => {
+                if (!activeTrafficLightIds.includes(id)) {
+                    trafficLightMarkers[id].remove();
+                    delete trafficLightMarkers[id];
+                }
+            });
+            
+            // Update traffic light positions and states
+            traffic_lights.forEach(traffic_light => {
+                const color = getTrafficLightColor(traffic_light.state);
+                if (!trafficLightMarkers[traffic_light.id]) {
+                    // Create new traffic light marker
+                    trafficLightMarkers[traffic_light.id] = L.marker([traffic_light.y, traffic_light.x], {
+                        icon: createTrafficLightIcon(color)
+                    }).addTo(map);
+                } else {
+                    // Update existing traffic light marker
+                    trafficLightMarkers[traffic_light.id].setLatLng([traffic_light.y, traffic_light.x]);
+                    trafficLightMarkers[traffic_light.id].setIcon(createTrafficLightIcon(color));
+                }
+            });
+            
+            // ========== NEW: Update power data ==========
+            if (powerData) {
+                // Update power metrics
+                if (powerData.power_demand) {
+                    const demand = powerData.power_demand;
+                    totalDemandElement.textContent = `${demand.total_demand.toFixed(2)} MW`;
+                    tlDemandElement.textContent = `${demand.tl_demand.toFixed(3)} MW`;
+                    evDemandElement.textContent = `${demand.ev_demand.toFixed(3)} MW`;
+                    streetDemandElement.textContent = `${demand.street_demand.toFixed(3)} MW`;
+                }
+                
+                // Update grid congestion
+                const congestion = powerData.grid_congestion || 0;
+                gridCongestionElement.textContent = `${(congestion * 100).toFixed(1)}%`;
+                
+                // Update grid status indicator
+                if (congestion > 0.9) {
+                    gridStatusElement.className = 'grid-status critical';
+                    gridStatusElement.textContent = 'GRID CRITICAL';
+                } else if (congestion > 0.7) {
+                    gridStatusElement.className = 'grid-status congested';
+                    gridStatusElement.textContent = 'GRID CONGESTED';
+                } else {
+                    gridStatusElement.className = 'grid-status operational';
+                    gridStatusElement.textContent = 'GRID OPERATIONAL';
+                }
+                
+                // Update charging stations
+                if (powerData.charging_stations) {
+                    powerData.charging_stations.forEach(station => {
+                        if (!chargingStationMarkers[station.id]) {
+                            // Create new charging station marker
+                            const marker = L.marker(
+                                [station.position[0], station.position[1]], 
+                                {
+                                    icon: createChargingStationIcon(
+                                        station.vehicles_charging, 
+                                        station.capacity
+                                    )
+                                }
+                            ).addTo(map);
+                            
+                            marker.bindPopup(`
+                                <b>EV Charging Station</b><br>
+                                ID: ${station.id}<br>
+                                Charging: ${station.vehicles_charging}/${station.capacity}
+                            `);
+                            
+                            chargingStationMarkers[station.id] = marker;
+                        } else {
+                            // Update existing marker
+                            chargingStationMarkers[station.id].setIcon(
+                                createChargingStationIcon(
+                                    station.vehicles_charging, 
+                                    station.capacity
+                                )
+                            );
+                        }
+                    });
+                }
+                
+                // Update power chart
+                if (powerData.power_demand) {
+                    // Keep only last 50 data points
+                    if (powerChart.data.labels.length > 50) {
+                        powerChart.data.labels.shift();
+                        powerChart.data.datasets.forEach(dataset => {
+                            dataset.data.shift();
+                        });
+                    }
+                    
+                    powerChart.data.labels.push(timeStep);
+                    powerChart.data.datasets[0].data.push(powerData.power_demand.total_demand);
+                    powerChart.data.datasets[1].data.push(powerData.power_demand.ev_demand);
+                    powerChart.data.datasets[2].data.push(powerData.power_demand.tl_demand);
+                    powerChart.update('none'); // Update without animation for performance
+                }
+            }
+        });
+        
+        // Helper function to convert SUMO traffic light states to colors
+        function getTrafficLightColor(state) {
+            if (!state) return 'off';
+            if (state.toLowerCase().includes('g')) return 'green';
+            if (state.toLowerCase().includes('y')) return 'yellow';
+            if (state.toLowerCase().includes('r')) return 'red';
+            return 'off';
+        }
+        
+        // Handle restart button
+        restartButton.addEventListener('click', function() {
+            resetSimulation();
+            
+            // Tell the server to restart the simulation
+            socket.emit('restart', { city: currentCity });
+        });
+    </script>
+</body>
+</html>
