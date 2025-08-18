@@ -1,0 +1,8 @@
+id,x,y,v_nom,zone
+Vernon_West,-118.225,34.018,138,Industrial
+Vernon_Central,-118.22,34.02,138,Industrial
+Vernon_East,-118.215,34.025,138,Industrial
+Commerce,-118.218,34.023,138,Industrial
+Huntington_Park,-118.222,34.022,138,Industrial
+Maywood,-118.217,34.019,69,Industrial
+Vernon_Power,-118.23,34.015,345,Generation

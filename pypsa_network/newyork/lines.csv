@@ -1,0 +1,9 @@
+id,bus0,bus1,x,r,s_nom
+Line_1,Hudson_Gen,Liberty_State,0.01,0.005,200
+Line_2,Liberty_State,Newport,0.008,0.004,150
+Line_3,Newport,Jersey_City,0.008,0.004,150
+Line_4,Jersey_City,Exchange_Place,0.008,0.004,150
+Line_5,Exchange_Place,Liberty_State,0.01,0.005,100
+Dist_1,Jersey_City,Substation_1,0.015,0.008,50
+Dist_2,Newport,Substation_2,0.015,0.008,50
+Dist_3,Substation_1,Substation_2,0.02,0.01,30

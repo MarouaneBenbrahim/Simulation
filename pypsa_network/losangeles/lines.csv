@@ -1,0 +1,8 @@
+id,bus0,bus1,x,r,s_nom
+Line_1,Vernon_Power,Vernon_West,0.01,0.005,250
+Line_2,Vernon_West,Vernon_Central,0.008,0.004,150
+Line_3,Vernon_Central,Vernon_East,0.008,0.004,150
+Line_4,Vernon_Central,Commerce,0.008,0.004,120
+Line_5,Vernon_Central,Huntington_Park,0.008,0.004,120
+Line_6,Commerce,Maywood,0.015,0.008,80
+Line_7,Vernon_East,Commerce,0.01,0.005,100

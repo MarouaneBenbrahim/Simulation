@@ -1,0 +1,7 @@
+id,bus,p_set
+Load_Vernon_West,Vernon_West,50
+Load_Vernon_Central,Vernon_Central,60
+Load_Vernon_East,Vernon_East,45
+Load_Commerce,Commerce,40
+Load_Huntington,Huntington_Park,35
+Load_Maywood,Maywood,20
