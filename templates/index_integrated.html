@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SUMOxPyPSA - Traffic & Power Integration</title>
+    
+    <!-- Leaflet CSS and JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.min.js"></script>
+    
+    <!-- Chart.js for power visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+        }
+        #map { 
+            position: absolute; 
+            top: 0; 
+            bottom: 0; 
+            width: 100%; 
+            height: 100vh; 
+        }
+        .car-marker {
+            width: 8px;
+            height: 18px;
+        }
+        .leaflet-marker-icon {
+            transition: transform 0.05s linear, left 0.05s linear, top 0.05s linear;
+            will-change: transform, left, top;
+        }
+        
+        /* Main Control Panel */
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(245,245,245,0.95) 100%);
+            padding: 20px;
+            border-radius: 10px;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            min-width: 320px;
+            max-width: 380px;
+            backdrop-filter: blur(10px);
+        }
+        
+        /* Power Panel */
+        .power-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: linear-gradient(135deg, rgba(30,30,40,0.95) 0%, rgba(20,20,30,0.95) 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            min-width: 350px;
+            max-height: 80vh;
+            overflow-y: auto;
+            display: none;
+        }
+        
+        .power-panel.active {
+            display: block;
+        }
+        
+        .panel-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #333;
+        }
+        
+        .panel-header h3 {
+            margin: 0;
+            font-size: 18px;
+            color: #fff;
+            flex-grow: 1;
+        }
+        
+        .control-panel h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            color: #2c3e50;
+            font-size: 20px;
+            font-weight: 600;
+        }
+        
+        .control-panel button {
+            margin-top: 10px;
+            padding: 10px 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .control-panel button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .control-panel button:disabled {
+            background: linear-gradient(135deg, #cbd5e0 0%, #a0aec0 100%);
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .stat-item {
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+            padding: 8px;
+            background: rgba(255,255,255,0.7);
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        
+        .stat-item:hover {
+            background: rgba(255,255,255,0.9);
+        }
+        
+        .stat-label {
+            font-weight: 500;
+            color: #4a5568;
+        }
+        
+        .stat-value {
+            font-weight: 700;
+            color: #2d3748;
+        }
+        
+        select {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+            border: 2px solid #e2e8f0;
+            background: white;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .city-marker {
+            width: 12px;
+            height: 12px;
+            background-color: #ff4444;
+            border: 2px solid white;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        
+        .traffic-light {
+            width: 12px;
+            height: 12px;
+            border: 2px solid #333;
+            border-radius: 50%;
+            transition: background-color 0.3s ease;
+        }
+        
+        .traffic-light.red {
+            background-color: #ff0000;
+            box-shadow: 0 0 10px #ff0000;
+        }
+        
+        .traffic-light.yellow {
+            background-color: #ffff00;
+            box-shadow: 0 0 10px #ffff00;
+        }
+        
+        .traffic-light.green {
+            background-color: #00ff00;
+            box-shadow: 0 0 10px #00ff00;
+        }
+        
+        .traffic-light.off {
+            background-color: #666;
+        }
+        
+        /* Power Metrics */
+        .power-metric {
+            margin: 10px 0;
+            padding: 12px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .power-metric-label {
+            font-size: 12px;
+            color: #a0aec0;
+            margin-bottom: 5px;
+        }
+        
+        .power-metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+        }
+        
+        .power-metric-unit {
+            font-size: 14px;
+            color: #cbd5e0;
+            margin-left: 5px;
+        }
+        
+        /* Progress Bars */
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.5s ease;
+        }
+        
+        /* Alert Box */
+        .alert-box {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(255, 59, 48, 0.95);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(255, 59, 48, 0.4);
+            display: none;
+            z-index: 2000;
+            max-width: 400px;
+        }
+        
+        .alert-box.warning {
+            background: rgba(255, 149, 0, 0.95);
+        }
+        
+        .alert-box.info {
+            background: rgba(0, 122, 255, 0.95);
+        }
+        
+        .alert-box.active {
+            display: block;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        /* Chart Container */
+        .chart-container {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+        }
+        
+        /* Toggle Button */
+        .toggle-power-btn {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            z-index: 999;
+            font-weight: 600;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            transition: all 0.3s ease;
+        }
+        
+        .toggle-power-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+        
+        .toggle-power-btn.active {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        
+        /* Status Indicators */
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-indicator.online {
+            background: #48bb78;
+        }
+        
+        .status-indicator.offline {
+            background: #f56565;
+        }
+        
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(72, 187, 120, 0.7);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(72, 187, 120, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(72, 187, 120, 0);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <!-- Toggle Power Panel Button -->
+    <button class="toggle-power-btn" id="togglePowerBtn" onclick="togglePowerPanel()">
+        ⚡ Power Grid
+    </button>
+    
+    <!-- Main Control Panel -->
+    <div class="control-panel">
+        <h3>🚦 SUMOxPyPSA Control Center</h3>
+        <select id="citySelector" class="form-select">
+            <option value="">Select a city...</option>
+            <option value="newyork">New York, USA ⚡</option>
+            <option value="miami">Miami, USA</option>
+            <option value="losangeles">Los Angeles, USA</option>
+        </select>
+        
+        <div class="stat-item">
+            <span class="stat-label">⏱️ Time Step:</span>
+            <span class="stat-value" id="time-step">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">🚗 Total Vehicles:</span>
+            <span class="stat-value" id="total-vehicles">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">🚙 Active Vehicles:</span>
+            <span class="stat-value" id="active-vehicles">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">🚦 Traffic Lights:</span>
+            <span class="stat-value" id="traffic-lights-count">0</span>
+        </div>
+        
+        <button id="start-btn" disabled>▶️ Start Simulation</button>
+        <button id="restart-btn" style="display: none;">🔄 Restart Simulation</button>
+    </div>
+    
+    <!-- Power Panel -->
+    <div class="power-panel" id="powerPanel">
+        <div class="panel-header">
+            <h3>⚡ NYC Power Grid Status</h3>
+            <span class="status-indicator online"></span>
+        </div>
+        
+        <div class="power-metric">
+            <div class="power-metric-label">Total Load</div>
+            <div>
+                <span class="power-metric-value" id="total-load">0</span>
+                <span class="power-metric-unit">MW</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="load-progress" style="width: 0%"></div>
+            </div>
+        </div>
+        
+        <div class="power-metric">
+            <div class="power-metric-label">Traffic Infrastructure</div>
+            <div>
+                <span class="power-metric-value" id="traffic-load">0</span>
+                <span class="power-metric-unit">MW</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="traffic-progress" style="width: 0%"></div>
+            </div>
+        </div>
+        
+        <div class="power-metric">
+            <div class="power-metric-label">EV Charging</div>
+            <div>
+                <span class="power-metric-value" id="ev-load">0</span>
+                <span class="power-metric-unit">MW</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="ev-progress" style="width: 0%"></div>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <canvas id="powerChart" width="300" height="150"></canvas>
+        </div>
+        
+        <div style="margin-top: 20px;">
+            <button onclick="simulatePowerOutage()" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                ⚠️ Simulate Outage
+            </button>
+        </div>
+    </div>
+    
+    <!-- Alert Box -->
+    <div class="alert-box" id="alertBox"></div>
+    
+    <script>
+        // City coordinates
+        const cityConfigs = {
+            newyork: { lat: 40.7128, lng: -74.0060, zoom: 13 },
+            miami: { lat: 25.7617, lng: -80.1918, zoom: 13 },
+            losangeles: { lat: 34.0522, lng: -118.2437, zoom: 13 }
+        };
+        
+        // Get elements
+        const citySelector = document.getElementById('citySelector');
+        let currentCity = citySelector.value;
+        
+        // Initialize map
+        const map = L.map('map').setView([39.8283, -98.5795], 4);
+        
+        // Add dark theme tiles
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        // Add city markers
+        Object.entries(cityConfigs).forEach(([city, coords]) => {
+            const marker = L.circleMarker([coords.lat, coords.lng], {
+                radius: 8,
+                fillColor: city === 'newyork' ? "#667eea" : "#ff4444",
+                color: "#fff",
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).addTo(map);
+            
+            const cityName = city.charAt(0).toUpperCase() + city.slice(1).replace('newyork', 'New York').replace('losangeles', 'Los Angeles');
+            marker.bindPopup(cityName + (city === 'newyork' ? ' ⚡' : ''));
+            
+            marker.on('click', () => {
+                citySelector.value = city;
+                handleCitySelection();
+            });
+        });
+
+        const markers = {};
+        const carIcon = L.icon({
+            iconUrl: '/static/car-icon.PNG',
+            iconSize: [8, 18],
+            iconAnchor: [4, 9],
+        });
+
+        const trafficLightMarkers = {};
+        
+        function createTrafficLightIcon(color) {
+            return L.divIcon({
+                className: `traffic-light ${color}`,
+                iconSize: [6, 6],
+                iconAnchor: [3, 3]
+            });
+        }
+
+        // UI elements
+        const timeStepElement = document.getElementById('time-step');
+        const totalVehiclesElement = document.getElementById('total-vehicles');
+        const activeVehiclesElement = document.getElementById('active-vehicles');
+        const trafficLightsElement = document.getElementById('traffic-lights-count');
+        const startButton = document.getElementById('start-btn');
+        const restartButton = document.getElementById('restart-btn');
+        
+        // Power elements
+        const powerPanel = document.getElementById('powerPanel');
+        const toggleBtn = document.getElementById('togglePowerBtn');
+        const totalLoadElement = document.getElementById('total-load');
+        const trafficLoadElement = document.getElementById('traffic-load');
+        const evLoadElement = document.getElementById('ev-load');
+        const alertBox = document.getElementById('alertBox');
+        
+        // Stats
+        let totalVehicles = 0;
+        let timeStep = 0;
+        let simulationStarted = false;
+        let powerData = null;
+        let powerChart = null;
+        let powerHistory = [];
+        
+        // Connect to server
+        const socket = io();
+        
+        function handleCitySelection() {
+            currentCity = citySelector.value;
+            if (currentCity) {
+                map.setView(
+                    [cityConfigs[currentCity].lat, cityConfigs[currentCity].lng],
+                    cityConfigs[currentCity].zoom
+                );
+                startButton.disabled = false;
+                
+                // Show power panel for NYC
+                if (currentCity === 'newyork') {
+                    toggleBtn.style.display = 'block';
+                } else {
+                    toggleBtn.style.display = 'none';
+                    powerPanel.classList.remove('active');
+                }
+            } else {
+                map.setView([39.8283, -98.5795], 4);
+                startButton.disabled = true;
+                toggleBtn.style.display = 'none';
+            }
+        }
+        
+        citySelector.addEventListener('change', handleCitySelection);
+        
+        startButton.addEventListener('click', function() {
+            if (!simulationStarted) {
+                socket.emit('change_city', { city: currentCity });
+                simulationStarted = true;
+                startButton.style.display = 'none';
+                restartButton.style.display = 'block';
+                
+                if (currentCity === 'newyork') {
+                    initPowerChart();
+                }
+            }
+        });
+        
+        function resetSimulation() {
+            timeStep = 0;
+            totalVehicles = 0;
+            timeStepElement.textContent = '0';
+            totalVehiclesElement.textContent = '0';
+            activeVehiclesElement.textContent = '0';
+            trafficLightsElement.textContent = '0';
+            
+            for (const id in markers) {
+                markers[id].remove();
+                delete markers[id];
+            }
+            
+            for (const id in trafficLightMarkers) {
+                trafficLightMarkers[id].remove();
+                delete trafficLightMarkers[id];
+            }
+            
+            powerHistory = [];
+        }
+        // EV Station markers
+        const evStationMarkers = {};
+
+        // EV Station icon
+        function createEVStationIcon(utilization) {
+            const color = utilization > 80 ? '#ff4444' : utilization > 50 ? '#ffaa00' : '#44ff44';
+            return L.divIcon({
+                html: `<div style="background: ${color}; width: 20px; height: 20px; border-radius: 50%; border: 2px solid white; display: flex; align-items: center; justify-content: center;">
+                        <span style="color: white; font-size: 12px; font-weight: bold;">⚡</span>
+                    </div>`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12],
+                className: 'ev-station-marker'
+            });
+        }
+        socket.on('update', (data) => {
+    const vehicles = data.vehicles || data;
+    const traffic_lights = data.traffic_lights || [];
+    
+    timeStep++;
+    timeStepElement.textContent = timeStep;
+    
+    activeVehiclesElement.textContent = vehicles.length;
+    trafficLightsElement.textContent = traffic_lights.length;
+    
+    if (vehicles.length > 0 && totalVehicles < vehicles.length) {
+        totalVehicles = Math.max(totalVehicles, vehicles.length);
+        totalVehiclesElement.textContent = totalVehicles;
+    }
+    
+    // Update vehicles
+    const activeVehicleIds = vehicles.map(v => v.id);
+    Object.keys(markers).forEach(id => {
+        if (!activeVehicleIds.includes(id)) {
+            markers[id].remove();
+            delete markers[id];
+        }
+    });
+    
+    vehicles.forEach(vehicle => {
+        // Use different icon for EVs
+        const vehicleIcon = vehicle.is_ev ? evCarIcon : carIcon;
+        
+        if (!markers[vehicle.id]) {
+            markers[vehicle.id] = L.marker([vehicle.y, vehicle.x], {
+                icon: vehicleIcon
+            }).addTo(map);
+            
+            const icon = markers[vehicle.id].getElement();
+            if (icon) {
+                icon.style.transform = `${icon.style.transform} rotate(${vehicle.angle}deg)`;
+            }
+        } else {
+            markers[vehicle.id].setLatLng([vehicle.y, vehicle.x]);
+            markers[vehicle.id].setIcon(vehicleIcon); // Update icon in case EV status changed
+            
+            const icon = markers[vehicle.id].getElement();
+            if (icon) {
+                let currentTransform = icon.style.transform || '';
+                currentTransform = currentTransform.replace(/\s*rotate\([^)]*\)/g, '');
+                icon.style.transform = `${currentTransform} rotate(${vehicle.angle}deg)`;
+            }
+        }
+    });
+    
+    // Update traffic lights
+    const activeTrafficLightIds = traffic_lights.map(tl => tl.id);
+    
+    Object.keys(trafficLightMarkers).forEach(id => {
+        if (!activeTrafficLightIds.includes(id)) {
+            trafficLightMarkers[id].remove();
+            delete trafficLightMarkers[id];
+        }
+    });
+    
+    traffic_lights.forEach(traffic_light => {
+        const color = getTrafficLightColor(traffic_light.state);
+        if (!trafficLightMarkers[traffic_light.id]) {
+            trafficLightMarkers[traffic_light.id] = L.marker([traffic_light.y, traffic_light.x], {
+                icon: createTrafficLightIcon(color)
+            }).addTo(map);
+        } else {
+            trafficLightMarkers[traffic_light.id].setLatLng([traffic_light.y, traffic_light.x]);
+            trafficLightMarkers[traffic_light.id].setIcon(createTrafficLightIcon(color));
+        }
+    });
+    
+    // Update power data if available - FIXED
+    if (currentCity === 'newyork') {
+        // Use actual power data if available, otherwise calculate from traffic
+        if (data.power) {
+            console.log('Power data received:', data.power);
+            
+            // Extract power values with multiple fallbacks
+            const totalLoad = data.power.total_load_mw || 
+                            data.power.total_load || 
+                            (2100 + vehicles.length * 0.5);
+            
+            const trafficLoad = data.power.traffic_infrastructure_mw || 
+                               data.power.traffic_load || 
+                               (5.8 + traffic_lights.length * 0.002);
+            
+            const evLoad = data.power.ev_charging_mw || 
+                          data.power.ev_charging || 
+                          (data.ev_count ? data.ev_count * 0.01 : vehicles.length * 0.002);
+            
+            // Update display
+            document.getElementById('total-load').textContent = totalLoad.toFixed(1);
+            document.getElementById('traffic-load').textContent = trafficLoad.toFixed(1);
+            document.getElementById('ev-load').textContent = evLoad.toFixed(2);
+            
+            // Update progress bars with smooth transitions
+            document.getElementById('load-progress').style.width = `${Math.min(100, (totalLoad / 4000) * 100)}%`;
+            document.getElementById('traffic-progress').style.width = `${Math.min(100, (trafficLoad / 50) * 100)}%`;
+            document.getElementById('ev-progress').style.width = `${Math.min(100, (evLoad / 10) * 100)}%`;
+            
+            // Update chart
+            if (powerChart) {
+                powerHistory.push(totalLoad);
+                if (powerHistory.length > 20) {
+                    powerHistory.shift();
+                }
+                powerChart.data.labels = powerHistory.map((_, i) => `${i * 5}s`);
+                powerChart.data.datasets[0].data = powerHistory;
+                powerChart.update('none');
+            }
+        } else {
+            // Calculate power from traffic data if no power data received
+            const baseLoad = 2100 + Math.sin(timeStep / 100) * 50;
+            const trafficLoad = 5.8 + (traffic_lights.length * 0.002) + (vehicles.length * 0.001);
+            const evLoad = (data.ev_count || Math.floor(vehicles.length * 0.2)) * 0.01;
+            const totalLoad = baseLoad + trafficLoad + evLoad;
+            
+            document.getElementById('total-load').textContent = totalLoad.toFixed(1);
+            document.getElementById('traffic-load').textContent = trafficLoad.toFixed(1);
+            document.getElementById('ev-load').textContent = evLoad.toFixed(2);
+            
+            document.getElementById('load-progress').style.width = `${Math.min(100, (totalLoad / 4000) * 100)}%`;
+            document.getElementById('traffic-progress').style.width = `${Math.min(100, (trafficLoad / 50) * 100)}%`;
+            document.getElementById('ev-progress').style.width = `${Math.min(100, (evLoad / 10) * 100)}%`;
+        }
+    }
+    
+    // Update EV stations if available - FIXED
+    if (data.ev_stations && currentCity === 'newyork') {
+        data.ev_stations.forEach(station => {
+            // Ensure we have valid data
+            const utilization = station.utilization || 0;
+            const evs_charging = station.evs_charging || 0;
+            const max_capacity = station.max_capacity || 20;
+            
+            if (!evStationMarkers[station.id]) {
+                // Create new EV station marker
+                const marker = L.marker([station.lat, station.lon], {
+                    icon: createEVStationIcon(utilization),
+                    zIndexOffset: 1000 // Make sure stations appear above other markers
+                }).addTo(map);
+                
+                // Add popup with station info
+// Update the EV station popup to show max_capacity correctly
+                marker.bindPopup(`
+                    <div style="min-width: 250px; font-family: Arial, sans-serif;">
+                        <h4 style="margin: 0 0 10px 0; color: #2c3e50;">
+                            ⚡ ${station.name}
+                        </h4>
+                        <div style="background: #f8f9fa; padding: 10px; border-radius: 5px;">
+                            <p style="margin: 5px 0;">
+                                <strong>Power Capacity:</strong> ${station.power} kW
+                            </p>
+                            <p style="margin: 5px 0;">
+                                <strong>EVs Charging:</strong> 
+                                <span style="font-size: 18px; font-weight: bold; color: ${station.evs_charging > 5 ? '#ff4444' : station.evs_charging > 2 ? '#ffaa00' : '#44ff44'}">
+                                    ${station.evs_charging}
+                                </span> / ${station.max_capacity || 7}
+                            </p>
+                            <p style="margin: 5px 0;">
+                                <strong>EVs Nearby:</strong> ${station.evs_nearby || 0}
+                            </p>
+                            <p style="margin: 5px 0;">
+                                <strong>Utilization:</strong> ${station.utilization.toFixed(1)}%
+                            </p>
+                            <div style="background: #e0e0e0; height: 20px; border-radius: 10px; overflow: hidden; margin-top: 10px; position: relative;">
+                                <div style="background: linear-gradient(90deg, 
+                                    ${station.utilization > 80 ? '#ff4444' : station.utilization > 50 ? '#ffaa00' : '#44ff44'}, 
+                                    ${station.utilization > 80 ? '#cc0000' : station.utilization > 50 ? '#ff8800' : '#00cc00'}); 
+                                    width: ${station.utilization}%; height: 100%; transition: width 0.5s ease;">
+                                </div>
+                                <span style="position: absolute; top: 2px; left: 50%; transform: translateX(-50%); color: #333; font-weight: bold; font-size: 12px;">
+                                    ${station.evs_charging} / ${station.max_capacity || 7}
+                                </span>
+                            </div>
+                            <p style="margin: 10px 0 5px 0; font-size: 12px; color: #666;">
+                                Status: ${station.utilization > 80 ? '🔴 High Demand' : station.utilization > 50 ? '🟡 Moderate' : '🟢 Available'}
+                            </p>
+                            <p style="margin: 5px 0; font-size: 11px; color: #888;">
+                                Power Output: ${(station.evs_charging * 50).toFixed(0)} kW
+                            </p>
+                        </div>
+                    </div>
+                `);
+                
+                // Add click handler
+                marker.on('click', function() {
+                    socket.emit('power_event', {
+                        type: 'ev_station_click',
+                        station_id: station.id,
+                        station_name: station.name
+                    });
+                });
+                
+                // Store marker
+                evStationMarkers[station.id] = marker;
+            } else {
+                // Update existing marker
+                evStationMarkers[station.id].setIcon(createEVStationIcon(utilization));
+                
+                // Update popup content dynamically
+                const popupContent = `
+                    <div style="min-width: 250px; font-family: Arial, sans-serif;">
+                        <h4 style="margin: 0 0 10px 0; color: #2c3e50;">
+                            ⚡ ${station.name}
+                        </h4>
+                        <div style="background: #f8f9fa; padding: 10px; border-radius: 5px;">
+                            <p style="margin: 5px 0;">
+                                <strong>Power Capacity:</strong> ${station.power} kW
+                            </p>
+                            <p style="margin: 5px 0;">
+                                <strong>EVs Charging:</strong> ${evs_charging} / ${max_capacity}
+                            </p>
+                            <p style="margin: 5px 0;">
+                                <strong>Utilization:</strong> ${utilization.toFixed(1)}%
+                            </p>
+                            <div style="background: #e0e0e0; height: 15px; border-radius: 8px; overflow: hidden; margin-top: 10px;">
+                                <div style="background: linear-gradient(90deg, 
+                                    ${utilization > 80 ? '#ff4444' : utilization > 50 ? '#ffaa00' : '#44ff44'}, 
+                                    ${utilization > 80 ? '#cc0000' : utilization > 50 ? '#ff8800' : '#00cc00'}); 
+                                    width: ${utilization}%; height: 100%; transition: width 0.5s ease;">
+                                </div>
+                            </div>
+                            <p style="margin: 10px 0 5px 0; font-size: 12px; color: #666;">
+                                Status: ${utilization > 80 ? '🔴 High Demand' : utilization > 50 ? '🟡 Moderate' : '🟢 Available'}
+                            </p>
+                        </div>
+                    </div>
+                `;
+                evStationMarkers[station.id].setPopupContent(popupContent);
+            }
+        });
+    }
+    
+    // Update EV count in UI if available
+    if (data.ev_count !== undefined) {
+        console.log(`EVs on road: ${data.ev_count}`);
+        // You could add an EV counter to the UI here
+        // document.getElementById('ev-count').textContent = data.ev_count;
+    }
+    
+    // Handle power events (alerts)
+    if (data.power_events && data.power_events.length > 0) {
+        data.power_events.forEach(event => {
+            if (event.severity === 'critical') {
+                showAlert(event.message, 'warning');
+            }
+        });
+    }
+});
+        
+        function getTrafficLightColor(state) {
+            if (!state) return 'off';
+            if (state.toLowerCase().includes('g')) return 'green';
+            if (state.toLowerCase().includes('y')) return 'yellow';
+            if (state.toLowerCase().includes('r')) return 'red';
+            return 'off';
+        }
+        
+        function togglePowerPanel() {
+            powerPanel.classList.toggle('active');
+            toggleBtn.classList.toggle('active');
+        }
+        
+        function updatePowerDisplay(power) {
+            if (!power) return;
+            
+            powerData = power;
+            
+            // Update values
+            totalLoadElement.textContent = power.total_load ? power.total_load.toFixed(1) : '0';
+            trafficLoadElement.textContent = power.traffic_load ? power.traffic_load.toFixed(1) : '0';
+            evLoadElement.textContent = power.ev_charging ? power.ev_charging.toFixed(2) : '0';
+            
+            // Update progress bars
+            const maxLoad = 4000; // MW max capacity
+            document.getElementById('load-progress').style.width = `${Math.min(100, (power.total_load / maxLoad) * 100)}%`;
+            document.getElementById('traffic-progress').style.width = `${Math.min(100, (power.traffic_load / 50) * 100)}%`;
+            document.getElementById('ev-progress').style.width = `${Math.min(100, (power.ev_charging / 10) * 100)}%`;
+            
+            // Update chart
+            if (powerChart) {
+                powerHistory.push(power.total_load || 0);
+                if (powerHistory.length > 20) {
+                    powerHistory.shift();
+                }
+                
+                powerChart.data.labels = powerHistory.map((_, i) => i);
+                powerChart.data.datasets[0].data = powerHistory;
+                powerChart.update();
+            }
+            
+            // Check for alerts
+            if (power.total_load > 3500) {
+                showAlert('High power demand detected!', 'warning');
+            }
+        }
+        
+        function initPowerChart() {
+            const ctx = document.getElementById('powerChart').getContext('2d');
+            powerChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Total Load (MW)',
+                        data: [],
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: 'rgba(255, 255, 255, 0.8)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: 'rgba(255, 255, 255, 0.8)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: 'rgba(255, 255, 255, 0.8)'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function simulatePowerOutage() {
+            socket.emit('power_event', { type: 'outage_simulation', area: 'Manhattan' });
+            showAlert('Simulating power outage in Manhattan...', 'warning');
+        }
+        
+        function showAlert(message, type = 'info') {
+            alertBox.textContent = message;
+            alertBox.className = `alert-box ${type} active`;
+            setTimeout(() => {
+                alertBox.classList.remove('active');
+            }, 5000);
+        }
+        
+        restartButton.addEventListener('click', function() {
+            resetSimulation();
+            socket.emit('restart', { city: currentCity });
+        });
+        
+        socket.on('power_event_result', (result) => {
+            showAlert(result.message, 'warning');
+        });
+    </script>
+</body>
+</html>
