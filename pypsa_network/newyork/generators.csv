@@ -1,6 +1,0 @@
-id,bus,p_nom,marginal_cost,carrier
-Gen_Hudson,Hudson_Gen,500,30,gas
-Gen_Liberty,Liberty_State,100,40,gas
-Solar_Newport,Newport,20,0,solar
-Solar_Jersey,Jersey_City,15,0,solar
-Battery_Exchange,Exchange_Place,30,10,battery

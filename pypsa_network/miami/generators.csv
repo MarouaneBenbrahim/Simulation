@@ -1,6 +1,0 @@
-id,bus,p_nom,marginal_cost,carrier
-Gen_Port,Port_Miami,400,35,gas
-Gen_Downtown,Downtown,100,45,gas
-Solar_Wynwood,Wynwood,25,0,solar
-Solar_Brickell,Brickell,20,0,solar
-Battery_Midtown,Midtown,25,15,battery

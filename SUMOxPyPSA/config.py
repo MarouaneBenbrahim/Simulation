@@ -9,8 +9,8 @@ HOST = "0.0.0.0"
 PORT = 8080
 
 # Simulation Configuration
-SIMULATION_SPEED = 0.025
-UPDATE_FREQUENCY = 2
+SIMULATION_SPEED = 0.01
+UPDATE_FREQUENCY = 1
 
 # Focus on Los Angeles only
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -98,25 +98,23 @@ POWER_ZONES = {
 }
 
 # Realistic Charging Stations based on LA infrastructure
+# Region of Interest - Downtown LA area only
+REGION_OF_INTEREST = {
+    "min_lat": 34.020,
+    "max_lat": 34.080,
+    "min_lon": -118.280,
+    "max_lon": -118.220
+}
+
+# Filter charging stations to only those in region
 CHARGING_STATIONS = {
     "losangeles": [
-        # Downtown LA cluster
+        # Only DTLA stations
         {"id": "CS_DTLA_1", "lat": 34.050, "lon": -118.250, 
          "capacity": 20, "type": "level_2_ac", "grid_bus": "DTLA_138kV"},
         {"id": "CS_DTLA_2", "lat": 34.045, "lon": -118.245, 
          "capacity": 10, "type": "level_3_dc", "grid_bus": "DTLA_138kV"},
-        
-        # Vernon Industrial area
-        {"id": "CS_Vernon_1", "lat": 34.020, "lon": -118.220, 
-         "capacity": 15, "type": "level_2_ac", "grid_bus": "Vernon_230kV"},
-        {"id": "CS_Vernon_2", "lat": 34.015, "lon": -118.215, 
-         "capacity": 8, "type": "level_3_dc", "grid_bus": "Vernon_230kV"},
-        
-        # LAX area
-        {"id": "CS_LAX_1", "lat": 33.942, "lon": -118.408, 
-         "capacity": 25, "type": "level_2_ac", "grid_bus": "LAX_138kV"},
-        {"id": "CS_LAX_2", "lat": 33.940, "lon": -118.405, 
-         "capacity": 12, "type": "level_3_dc", "grid_bus": "LAX_138kV"},
+        # Remove Vernon, Harbor, LAX stations - they're outside the region
     ]
 }
 
@@ -142,6 +140,60 @@ DEMAND_RESPONSE = {
     "street_light_dimming": 0.5,   # Reduce street lighting
     "ev_throttling": 0.5            # Reduce charging rate
 }
+# Add these to your config.py
 
+# Time-based configuration
+import datetime
+
+def get_time_of_day_factor(simulation_step):
+    """Get time of day from simulation step (0.1s per step)"""
+    # Convert simulation step to hour of day
+    seconds = simulation_step * 0.1
+    hour = (seconds / 3600) % 24
+    
+    # Return period
+    if 6 <= hour < 9:
+        return "morning_rush", 1.5  # 150% traffic
+    elif 17 <= hour < 20:
+        return "evening_rush", 1.5  # 150% traffic
+    elif 9 <= hour < 17:
+        return "day", 1.0  # Normal traffic
+    else:
+        return "night", 0.2  # 20% traffic
+
+# Update simulation speed for better performance
+SIMULATION_SPEED = 0.001  # Much faster updates
+UPDATE_FREQUENCY = 1      # Update every step
+
+# Street lighting schedule
+STREET_LIGHT_SCHEDULE = {
+    "dawn": 6,      # 6 AM - lights start dimming
+    "sunrise": 7,   # 7 AM - lights off
+    "sunset": 18,   # 6 PM - lights start turning on
+    "dusk": 19,     # 7 PM - full brightness
+}
+
+# Power consumption modifiers
+POWER_MODIFIERS = {
+    "morning_rush": 1.3,   # 30% more power during rush hour
+    "evening_rush": 1.4,   # 40% more power (lights + traffic)
+    "day": 1.0,           # Normal power
+    "night": 0.6,         # 60% power at night (less traffic, dimmed lights)
+}
+
+# Blackout thresholds
+BLACKOUT_THRESHOLDS = {
+    "warning": 0.75,      # 75% grid capacity
+    "critical": 0.90,     # 90% grid capacity
+    "blackout": 1.0,      # 100% grid capacity - rolling blackouts
+}
+
+# EV Charging patterns
+EV_CHARGING_PATTERNS = {
+    "morning_rush": 0.1,   # 10% charging (people arriving at work)
+    "day": 0.3,           # 30% charging (during work)
+    "evening_rush": 0.4,   # 40% charging (home charging starts)
+    "night": 0.2,         # 20% charging (overnight charging)
+}
 # Default city
 DEFAULT_CITY = "losangeles"

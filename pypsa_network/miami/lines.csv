@@ -1,8 +1,0 @@
-id,bus0,bus1,x,r,s_nom
-Line_1,Port_Miami,Downtown,0.01,0.005,200
-Line_2,Downtown,Brickell,0.008,0.004,150
-Line_3,Downtown,Edgewater,0.008,0.004,150
-Line_4,Edgewater,Midtown,0.008,0.004,100
-Line_5,Midtown,Wynwood,0.008,0.004,100
-Line_6,Midtown,Design_District,0.008,0.004,100
-Line_7,Wynwood,Design_District,0.01,0.005,80

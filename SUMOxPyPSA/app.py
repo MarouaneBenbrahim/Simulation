@@ -1,4 +1,4 @@
-from flask import Flask, render_template, send_from_directory
+from flask import Flask, render_template, send_from_directory, request
 from flask_socketio import SocketIO, emit
 import traci
 import time
@@ -30,7 +30,7 @@ SUMO_BINARY = os.path.join(SUMO_PATH, "bin/sumo")
 simulation_running = False
 simulation_thread = None
 stop_event = threading.Event()
-CURRENT_CITY = "losangeles"  # Focus on LA
+CURRENT_CITY = "losangeles"
 pypsa_integration = None
 simulation_stats = {
     'step': 0,
@@ -60,17 +60,25 @@ def create_temp_sumocfg(city):
             f.write(f'        <additional-files value="{os.path.basename(city_sumo_config["additional-files"])}"/>\n')
         f.write('    </input>\n')
         
-        # Processing
+        # Processing - Enhanced for realistic vehicle behavior
         f.write('    <processing>\n')
-        for key, value in SUMO_COMMON_CONFIG.get("processing", {}).items():
-            f.write(f'        <{key} value="{value}"/>\n')
+        f.write('        <time-to-teleport value="-1"/>\n')  # Disable teleporting
+        f.write('        <collision.action value="warn"/>\n')
+        f.write('        <collision.check-junctions value="true"/>\n')
+        f.write('        <tls.all-off value="false"/>\n')  # Keep traffic lights active
+        f.write('        <tls.actuated.show-detectors value="true"/>\n')
+        f.write('        <lateral-resolution value="0.8"/>\n')
+        f.write('        <ignore-route-errors value="true"/>\n')
+        f.write('        <pedestrian.model value="striping"/>\n')
+        f.write('        <pedestrian.striping.dawdling value="0.2"/>\n')
+        f.write('        <random value="true"/>\n')  # Enable randomness for realistic behavior
         f.write('    </processing>\n')
         
         # Time
         f.write('    <time>\n')
         f.write('        <begin value="0"/>\n')
         f.write('        <end value="3600"/>\n')
-        f.write('        <step-length value="0.1"/>\n')
+        f.write('        <step-length value="0.1"/>\n')  # Smooth movement
         f.write('    </time>\n')
         
         f.write('</configuration>\n')
@@ -106,11 +114,19 @@ def sumo_simulation(city="losangeles"):
         simulation_running = True
         stop_event.clear()
         
-        # Start SUMO
+        # Start SUMO - ensure any existing connection is closed first
         sumo_cmd = [SUMO_BINARY, "-c", os.path.basename(temp_cfg)]
         logger.info(f"Running command: {' '.join(sumo_cmd)}")
         
         try:
+            # Close any existing connection
+            try:
+                if traci.isLoaded():
+                    traci.close()
+                    logger.info("Closed existing SUMO connection")
+            except:
+                pass
+            
             traci.start(sumo_cmd)
             logger.info("Successfully connected to SUMO")
             
@@ -135,22 +151,44 @@ def sumo_simulation(city="losangeles"):
             
             # Get current vehicles
             vehicles = traci.vehicle.getIDList()
-            simulation_stats['vehicles'] = len(vehicles)
             
-            # Estimate EVs
-            ev_count = int(len(vehicles) * EV_PERCENTAGE)
-            simulation_stats['ev_count'] = ev_count
-            
-            # Get traffic lights
+            # Get traffic lights in region
             traffic_lights = []
+            traffic_lights_in_region = []
+            
             for tl_id in traci.trafficlight.getIDList():
                 if not tl_id.startswith('GS_') and not tl_id.startswith('cluster_'):
                     try:
-                        # Get junction position
-                        junction_pos = traci.junction.getPosition(tl_id)
+                        junction_pos = None
                         
-                        if junction_pos and junction_pos[0] != -1073741824.0:
-                            gps_position = traci.simulation.convertGeo(*junction_pos)
+                        # Try multiple methods to get position
+                        try:
+                            junction_pos = traci.junction.getPosition(tl_id)
+                        except:
+                            try:
+                                controlled_links = traci.trafficlight.getControlledLinks(tl_id)
+                                if controlled_links:
+                                    for link in controlled_links:
+                                        if len(link) >= 2:
+                                            edge_id = link[0][0]
+                                            try:
+                                                to_node = traci.edge.getToJunction(edge_id)
+                                                junction_pos = traci.junction.getPosition(to_node)
+                                                break
+                                            except:
+                                                continue
+                            except:
+                                pass
+                        
+                        if not junction_pos or junction_pos[0] == -1073741824.0:
+                            continue
+                        
+                        gps_position = traci.simulation.convertGeo(*junction_pos)
+                        
+                        # Check if in region of interest
+                        if (REGION_OF_INTEREST['min_lat'] <= gps_position[1] <= REGION_OF_INTEREST['max_lat'] and
+                            REGION_OF_INTEREST['min_lon'] <= gps_position[0] <= REGION_OF_INTEREST['max_lon']):
+                            
                             state = traci.trafficlight.getRedYellowGreenState(tl_id)
                             
                             traffic_lights.append({
@@ -159,15 +197,100 @@ def sumo_simulation(city="losangeles"):
                                 'y': gps_position[1],
                                 'state': state
                             })
+                            traffic_lights_in_region.append(tl_id)
+                            
                     except Exception as e:
                         logger.debug(f"Error processing traffic light {tl_id}: {e}")
             
             simulation_stats['traffic_lights'] = len(traffic_lights)
             
+            # Get vehicle positions with proper filtering and behavior tracking
+            vehicle_data = []
+            vehicles_in_region = []
+            ev_count_actual = 0
+            
+            for vehicle_id in vehicles:
+                try:
+                    # Get vehicle position
+                    position = traci.vehicle.getPosition(vehicle_id)
+                    if position and position[0] != -1073741824.0:
+                        gps_position = traci.simulation.convertGeo(*position)
+                        
+                        # Check if vehicle is in region of interest
+                        if (REGION_OF_INTEREST['min_lat'] <= gps_position[1] <= REGION_OF_INTEREST['max_lat'] and
+                            REGION_OF_INTEREST['min_lon'] <= gps_position[0] <= REGION_OF_INTEREST['max_lon']):
+                            
+                            # Get vehicle properties
+                            angle = traci.vehicle.getAngle(vehicle_id)
+                            speed = traci.vehicle.getSpeed(vehicle_id)
+                            waiting_time = traci.vehicle.getWaitingTime(vehicle_id)
+                            
+                            # Check if at traffic light
+                            next_tls = traci.vehicle.getNextTLS(vehicle_id)
+                            at_light = False
+                            light_state = None
+                            
+                            if next_tls:
+                                # Check if close to traffic light (within 50m)
+                                if len(next_tls) > 0 and next_tls[0][2] < 50:
+                                    at_light = True
+                                    light_state = next_tls[0][3]  # Get the state of the upcoming light
+                            
+                            # Determine if vehicle is stopped
+                            is_waiting = speed < 0.1 and waiting_time > 0
+                            
+                            # Determine if EV
+                            try:
+                                veh_type = traci.vehicle.getTypeID(vehicle_id)
+                                is_ev = 'electric' in veh_type.lower() or 'ev' in veh_type.lower()
+                            except:
+                                is_ev = hash(vehicle_id) % 100 < (EV_PERCENTAGE * 100)
+                            
+                            if is_ev:
+                                ev_count_actual += 1
+                            
+                            # Get route information for smoother movement prediction
+                            try:
+                                route_index = traci.vehicle.getRouteIndex(vehicle_id)
+                                road_id = traci.vehicle.getRoadID(vehicle_id)
+                                lane_index = traci.vehicle.getLaneIndex(vehicle_id)
+                            except:
+                                route_index = 0
+                                road_id = ""
+                                lane_index = 0
+                            
+                            vehicle_data.append({
+                                'id': vehicle_id,
+                                'x': gps_position[0],
+                                'y': gps_position[1],
+                                'angle': angle,
+                                'speed': speed,
+                                'is_ev': is_ev,
+                                'is_waiting': is_waiting,
+                                'at_light': at_light,
+                                'light_state': light_state,
+                                'waiting_time': waiting_time,
+                                'road_id': road_id,
+                                'lane_index': lane_index
+                            })
+                            
+                            vehicles_in_region.append(vehicle_id)
+                            
+                            # Limit for performance while showing more vehicles
+                            if len(vehicle_data) >= 200:
+                                break
+                                
+                except Exception as e:
+                    logger.debug(f"Error processing vehicle {vehicle_id}: {e}")
+            
+            # Update stats with filtered counts
+            simulation_stats['vehicles'] = len(vehicles_in_region)
+            simulation_stats['ev_count'] = ev_count_actual
+            
             # Update power demand based on traffic
             if pypsa_integration:
                 power_demand = pypsa_integration.update_traffic_infrastructure(
-                    traffic_lights, vehicles
+                    traffic_lights, vehicles_in_region
                 )
                 simulation_stats['total_demand'] = power_demand.total
                 
@@ -211,32 +334,6 @@ def sumo_simulation(city="losangeles"):
             
             # Send updates to frontend
             if step_counter % UPDATE_FREQUENCY == 0:
-                # Get vehicle positions (limit for performance)
-                vehicle_data = []
-                for i, vehicle_id in enumerate(vehicles):
-                    if i >= 100:  # Limit to 100 vehicles
-                        break
-                    try:
-                        position = traci.vehicle.getPosition(vehicle_id)
-                        if position and position[0] != -1073741824.0:
-                            gps_position = traci.simulation.convertGeo(*position)
-                            angle = traci.vehicle.getAngle(vehicle_id)
-                            speed = traci.vehicle.getSpeed(vehicle_id)
-                            
-                            # Determine if EV (simple hash-based assignment)
-                            is_ev = hash(vehicle_id) % 100 < (EV_PERCENTAGE * 100)
-                            
-                            vehicle_data.append({
-                                'id': vehicle_id,
-                                'x': gps_position[0],
-                                'y': gps_position[1],
-                                'angle': angle,
-                                'speed': speed,
-                                'is_ev': is_ev
-                            })
-                    except Exception as e:
-                        logger.debug(f"Error processing vehicle {vehicle_id}: {e}")
-                
                 # Get comprehensive visualization data
                 viz_data = {}
                 if pypsa_integration:
@@ -248,7 +345,8 @@ def sumo_simulation(city="losangeles"):
                     'traffic_lights': traffic_lights,
                     'power': viz_data,
                     'stats': simulation_stats,
-                    'timestamp': step_counter
+                    'timestamp': step_counter,
+                    'region_bounds': REGION_OF_INTEREST  # Send region bounds to frontend
                 }
                 
                 socketio.emit('update', update_data)
@@ -264,7 +362,14 @@ def sumo_simulation(city="losangeles"):
         import traceback
         logger.error(traceback.format_exc())
     finally:
-        # Cleanup
+        # Cleanup - ensure SUMO connection is closed
+        try:
+            if traci.isLoaded():
+                traci.close()
+                logger.info("Closed SUMO connection in cleanup")
+        except:
+            pass
+        
         if temp_cfg and os.path.exists(temp_cfg):
             try:
                 os.unlink(temp_cfg)
@@ -285,10 +390,14 @@ def send_static(path):
     return send_from_directory('static', path)
 
 @socketio.on('connect')
-def handle_connect():
+def handle_connect(auth=None):
     """Handle client connection"""
     logger.info(f"Client connected: {request.sid}")
-    emit('connection_status', {'status': 'connected', 'city': CURRENT_CITY})
+    emit('connection_status', {
+        'status': 'connected', 
+        'city': CURRENT_CITY,
+        'region_bounds': REGION_OF_INTEREST  # Send region bounds on connect
+    })
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -298,7 +407,7 @@ def handle_disconnect():
 @socketio.on('start_simulation')
 def handle_start_simulation(data):
     """Start the simulation"""
-    global simulation_thread, CURRENT_CITY
+    global simulation_thread, CURRENT_CITY, simulation_running
     
     city = data.get('city', 'losangeles')
     if city not in CITY_CONFIGS:
@@ -312,6 +421,14 @@ def handle_start_simulation(data):
         emit('error', {'message': 'Simulation already running'})
         return
     
+    # Ensure any existing SUMO connection is closed
+    try:
+        if traci.isLoaded():
+            traci.close()
+            logger.info("Closed existing SUMO connection before starting")
+    except:
+        pass
+    
     # Start simulation in background thread
     simulation_thread = threading.Thread(target=sumo_simulation, args=(CURRENT_CITY,))
     simulation_thread.start()
@@ -321,12 +438,22 @@ def handle_start_simulation(data):
 @socketio.on('stop_simulation')
 def handle_stop_simulation():
     """Stop the simulation"""
-    global simulation_thread
+    global simulation_thread, simulation_running
     
     logger.info("Stopping simulation")
     
     if simulation_running:
         stop_event.set()
+        simulation_running = False
+        
+        # Try to close SUMO connection directly
+        try:
+            if traci.isLoaded():
+                traci.close()
+                logger.info("Closed SUMO connection on stop")
+        except:
+            pass
+        
         if simulation_thread:
             simulation_thread.join(timeout=5)
     
@@ -335,7 +462,7 @@ def handle_stop_simulation():
 @socketio.on('restart_simulation')
 def handle_restart_simulation(data):
     """Restart the simulation"""
-    global simulation_thread, CURRENT_CITY
+    global simulation_thread, CURRENT_CITY, simulation_running
     
     city = data.get('city', CURRENT_CITY)
     logger.info(f"Restarting simulation for {city}")
@@ -343,11 +470,25 @@ def handle_restart_simulation(data):
     # Stop current simulation
     if simulation_running:
         stop_event.set()
+        simulation_running = False
+        
+        # Try to close SUMO connection directly
+        try:
+            if traci.isLoaded():
+                traci.close()
+                logger.info("Closed SUMO connection on restart")
+        except:
+            pass
+        
         if simulation_thread:
             simulation_thread.join(timeout=5)
     
     # Start new simulation
     CURRENT_CITY = city
+    
+    # Small delay to ensure cleanup is complete
+    time.sleep(0.5)
+    
     simulation_thread = threading.Thread(target=sumo_simulation, args=(CURRENT_CITY,))
     simulation_thread.start()
     
@@ -359,7 +500,8 @@ def handle_get_status():
     status = {
         'running': simulation_running,
         'city': CURRENT_CITY,
-        'stats': simulation_stats
+        'stats': simulation_stats,
+        'region_bounds': REGION_OF_INTEREST
     }
     emit('status_update', status)
 
@@ -367,6 +509,7 @@ if __name__ == "__main__":
     logger.info(f"Starting SUMO x PyPSA server on {HOST}:{PORT}")
     logger.info(f"SUMO path: {SUMO_PATH}")
     logger.info(f"Default city: {DEFAULT_CITY}")
+    logger.info(f"Region of Interest: {REGION_OF_INTEREST}")
     
     # Run the Flask-SocketIO server
     socketio.run(app, debug=True, host=HOST, port=PORT)

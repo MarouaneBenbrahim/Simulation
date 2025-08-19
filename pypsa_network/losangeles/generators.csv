@@ -1,6 +1,0 @@
-id,bus,p_nom,marginal_cost,carrier
-Gen_Vernon,Vernon_Power,600,32,gas
-Gen_Commerce,Commerce,150,42,gas
-Solar_Vernon,Vernon_Central,30,0,solar
-Solar_Industrial,Vernon_East,25,0,solar
-Battery_Huntington,Huntington_Park,40,12,battery

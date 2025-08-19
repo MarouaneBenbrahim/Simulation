@@ -395,16 +395,86 @@
         
         /* Map Elements */
         .car-marker {
-            width: 10px;
-            height: 20px;
-            background: #2196F3;
-            border-radius: 2px;
-            border: 1px solid white;
-        }
-        
-        .car-marker.ev {
-            background: #4CAF50;
-        }
+    width: 12px;
+    height: 24px;
+    background: #2196F3;
+    border-radius: 3px;
+    border: 2px solid white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    transition: all 0.3s ease;
+}
+
+.car-marker.ev {
+    background: #4CAF50;
+    width: 14px;
+    height: 26px;
+}
+
+.car-marker:hover {
+    transform: scale(1.2);
+    z-index: 1000;
+}
+/* Better vehicle styling */
+.vehicle-marker {
+    transition: all 0.1s linear;
+    z-index: 100;
+}
+
+.vehicle-icon {
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+    transition: transform 0.1s linear;
+}
+
+.vehicle-stopped .vehicle-icon {
+    filter: drop-shadow(0 2px 4px rgba(255,0,0,0.5));
+    animation: pulse-stop 1s infinite;
+}
+
+@keyframes pulse-stop {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.ev-vehicle {
+    z-index: 150 !important;
+}
+
+/* Make traffic lights much more visible */
+.traffic-light {
+    width: 16px !important;
+    height: 16px !important;
+    border: 3px solid #222 !important;
+    border-radius: 50%;
+    z-index: 300 !important;
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+}
+
+.traffic-light.red {
+    background: radial-gradient(circle, #ff0000, #cc0000);
+    box-shadow: 0 0 30px #ff0000, 0 0 60px #ff0000;
+    animation: red-glow 1s ease-in-out infinite;
+}
+
+.traffic-light.yellow {
+    background: radial-gradient(circle, #ffff00, #cccc00);
+    box-shadow: 0 0 30px #ffff00, 0 0 60px #ffff00;
+    animation: yellow-blink 0.5s ease-in-out infinite;
+}
+
+.traffic-light.green {
+    background: radial-gradient(circle, #00ff00, #00cc00);
+    box-shadow: 0 0 30px #00ff00, 0 0 60px #00ff00;
+}
+
+@keyframes red-glow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+}
+
+@keyframes yellow-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
         
         .traffic-light {
             width: 8px;
@@ -648,13 +718,12 @@
         // Initialize map centered on Los Angeles
         const map = L.map('map').setView([34.0522, -118.2437], 13);
         
-        // Dark theme map tiles
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            subdomains: 'abcd',
+        // Bright standard map tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
             maxZoom: 20
         }).addTo(map);
-        
+                
         // Connect to server
         const socket = io();
         
@@ -853,43 +922,124 @@
         
         // Update vehicle markers
         function updateVehicles(vehicles) {
-            const activeVehicleIds = new Set(vehicles.map(v => v.id));
+    const activeVehicleIds = new Set(vehicles.map(v => v.id));
+    
+    // Remove vehicles that left the region or despawned
+    for (const id in vehicleMarkers) {
+        if (!activeVehicleIds.has(id)) {
+            map.removeLayer(vehicleMarkers[id]);
+            delete vehicleMarkers[id];
+        }
+    }
+    
+    // Update or create vehicles
+    vehicles.forEach(vehicle => {
+        const isNew = !vehicleMarkers[vehicle.id];
+        
+        if (isNew) {
+            // Create larger vehicle marker with better visibility
+            let iconHtml = '';
+            let iconClass = 'vehicle-marker';
             
-            // Remove old vehicles
-            for (const id in vehicleMarkers) {
-                if (!activeVehicleIds.has(id)) {
-                    vehicleMarkers[id].remove();
-                    delete vehicleMarkers[id];
-                }
+            if (vehicle.is_ev) {
+                // Green car for EV
+                iconHtml = `<div class="vehicle-icon ev" style="transform: rotate(${vehicle.angle - 90}deg);">
+                    <svg width="30" height="40" viewBox="0 0 30 40">
+                        <rect x="5" y="5" width="20" height="30" rx="3" fill="#4CAF50"/>
+                        <rect x="8" y="8" width="14" height="8" fill="#81C784"/>
+                        <rect x="8" y="25" width="14" height="6" fill="#81C784"/>
+                        <circle cx="10" cy="35" r="2" fill="#333"/>
+                        <circle cx="20" cy="35" r="2" fill="#333"/>
+                    </svg>
+                </div>`;
+                iconClass += ' ev-vehicle';
+            } else {
+                // Blue car for normal
+                iconHtml = `<div class="vehicle-icon" style="transform: rotate(${vehicle.angle - 90}deg);">
+                    <svg width="30" height="40" viewBox="0 0 30 40">
+                        <rect x="5" y="5" width="20" height="30" rx="3" fill="#2196F3"/>
+                        <rect x="8" y="8" width="14" height="8" fill="#64B5F6"/>
+                        <rect x="8" y="25" width="14" height="6" fill="#64B5F6"/>
+                        <circle cx="10" cy="35" r="2" fill="#333"/>
+                        <circle cx="20" cy="35" r="2" fill="#333"/>
+                    </svg>
+                </div>`;
             }
             
-            // Update or create vehicles
-            vehicles.forEach(vehicle => {
-                if (!vehicleMarkers[vehicle.id]) {
-                    // Create custom icon
-                    const iconClass = vehicle.is_ev ? 'car-marker ev' : 'car-marker';
-                    const carIcon = L.divIcon({
-                        className: iconClass,
-                        iconSize: [10, 20],
-                        iconAnchor: [5, 10]
-                    });
-                    
-                    vehicleMarkers[vehicle.id] = L.marker([vehicle.y, vehicle.x], {
-                        icon: carIcon,
-                        rotationAngle: vehicle.angle
-                    }).addTo(map);
-                } else {
-                    // Update position
-                    vehicleMarkers[vehicle.id].setLatLng([vehicle.y, vehicle.x]);
-                    
-                    // Update rotation
-                    const icon = vehicleMarkers[vehicle.id].getElement();
-                    if (icon) {
-                        icon.style.transform = `rotate(${vehicle.angle}deg)`;
-                    }
-                }
+            // Add stopped indicator
+            if (vehicle.is_waiting || vehicle.at_light) {
+                iconClass += ' vehicle-stopped';
+            }
+            
+            const carIcon = L.divIcon({
+                html: iconHtml,
+                className: iconClass,
+                iconSize: [30, 40],  // Bigger size
+                iconAnchor: [15, 20]  // Center anchor
             });
+            
+            vehicleMarkers[vehicle.id] = L.marker([vehicle.y, vehicle.x], {
+                icon: carIcon,
+                zIndexOffset: vehicle.is_ev ? 100 : 0
+            }).addTo(map);
+            
+            // Add detailed popup
+            vehicleMarkers[vehicle.id].bindPopup(`
+                <b>Vehicle: ${vehicle.id}</b><br>
+                Type: ${vehicle.is_ev ? '⚡ Electric' : '⛽ Normal'}<br>
+                Speed: ${vehicle.speed.toFixed(1)} m/s<br>
+                ${vehicle.at_light ? '🚦 At traffic light' : ''}
+                ${vehicle.is_waiting ? '⏸️ Waiting' : '▶️ Moving'}
+            `);
+        } else {
+            // Update existing vehicle
+            const marker = vehicleMarkers[vehicle.id];
+            const currentPos = marker.getLatLng();
+            const newPos = L.latLng(vehicle.y, vehicle.x);
+            
+            // Smooth movement
+            marker.setLatLng(newPos);
+            
+            // Update rotation and stopped state
+            let iconHtml = '';
+            let iconClass = 'vehicle-marker';
+            
+            if (vehicle.is_ev) {
+                iconHtml = `<div class="vehicle-icon ev" style="transform: rotate(${vehicle.angle - 90}deg);">
+                    <svg width="30" height="40" viewBox="0 0 30 40">
+                        <rect x="5" y="5" width="20" height="30" rx="3" fill="${vehicle.is_waiting ? '#2E7D32' : '#4CAF50'}"/>
+                        <rect x="8" y="8" width="14" height="8" fill="#81C784"/>
+                        <rect x="8" y="25" width="14" height="6" fill="#81C784"/>
+                        <circle cx="10" cy="35" r="2" fill="#333"/>
+                        <circle cx="20" cy="35" r="2" fill="#333"/>
+                    </svg>
+                </div>`;
+                iconClass += ' ev-vehicle';
+            } else {
+                iconHtml = `<div class="vehicle-icon" style="transform: rotate(${vehicle.angle - 90}deg);">
+                    <svg width="30" height="40" viewBox="0 0 30 40">
+                        <rect x="5" y="5" width="20" height="30" rx="3" fill="${vehicle.is_waiting ? '#1565C0' : '#2196F3'}"/>
+                        <rect x="8" y="8" width="14" height="8" fill="#64B5F6"/>
+                        <rect x="8" y="25" width="14" height="6" fill="#64B5F6"/>
+                        <circle cx="10" cy="35" r="2" fill="#333"/>
+                        <circle cx="20" cy="35" r="2" fill="#333"/>
+                    </svg>
+                </div>`;
+            }
+            
+            if (vehicle.is_waiting || vehicle.at_light) {
+                iconClass += ' vehicle-stopped';
+            }
+            
+            marker.setIcon(L.divIcon({
+                html: iconHtml,
+                className: iconClass,
+                iconSize: [30, 40],
+                iconAnchor: [15, 20]
+            }));
         }
+    });
+}
         
         // Update traffic light markers
         function updateTrafficLights(trafficLights) {

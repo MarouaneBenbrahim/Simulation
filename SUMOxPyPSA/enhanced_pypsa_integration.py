@@ -1,4 +1,4 @@
-# enhanced_pypsa_integration.py
+# enhanced_pypsa_integration.py - FIXED VERSION
 """
 Enhanced integration module for SUMO traffic simulation and PyPSA power system analysis.
 This module creates a realistic bidirectional relationship between traffic patterns and power grid dynamics.
@@ -68,16 +68,22 @@ class EnhancedSUMOPyPSAIntegration:
         # Load configuration
         from config import (POWER_ZONES, CHARGING_STATIONS, 
                            GRID_PARAMETERS, EV_CHARGING_POWER)
-        self.power_zones_config = POWER_ZONES[city]
-        self.charging_config = CHARGING_STATIONS[city]
+        self.power_zones_config = POWER_ZONES.get(city, POWER_ZONES['losangeles'])
+        self.charging_config = CHARGING_STATIONS.get(city, CHARGING_STATIONS['losangeles'])
         self.grid_params = GRID_PARAMETERS
         self.ev_params = EV_CHARGING_POWER
+        
+        # Track if network has been solved
+        self.network_solved = False
         
         # Initialize network
         self._create_realistic_power_network()
         
     def _create_realistic_power_network(self):
         """Create a realistic power network for Los Angeles"""
+        
+        # Set snapshots first
+        self.network.set_snapshots([pd.Timestamp.now()])
         
         # Create buses for each zone
         for zone_name, zone_config in self.power_zones_config.items():
@@ -123,50 +129,57 @@ class EnhancedSUMOPyPSAIntegration:
         ]
         
         for i, (bus0, bus1, s_nom, v_nom) in enumerate(connections):
-            self.network.add("Line",
-                           f"L{i}_{bus0}_{bus1}",
-                           bus0=bus0,
-                           bus1=bus1,
-                           s_nom=s_nom,
-                           x=0.01 * (v_nom / 138),  # Scaled reactance
-                           r=0.001 * (v_nom / 138),
-                           b=0.0001)
+            # Check if buses exist
+            if bus0 in self.network.buses.index and bus1 in self.network.buses.index:
+                self.network.add("Line",
+                               f"L{i}_{bus0}_{bus1}",
+                               bus0=bus0,
+                               bus1=bus1,
+                               s_nom=s_nom,
+                               x=0.01 * (v_nom / 138),  # Scaled reactance
+                               r=0.001 * (v_nom / 138),
+                               b=0.0001)
     
     def _add_generators(self):
         """Add realistic generation mix for LA"""
         # Natural gas plants
-        self.network.add("Generator",
-                       "Harbor_Gas",
-                       bus="Harbor_HV",
-                       p_nom=800,
-                       marginal_cost=50,
-                       ramp_limit_up=100,
-                       ramp_limit_down=100)
+        if "Harbor_HV" in self.network.buses.index:
+            self.network.add("Generator",
+                           "Harbor_Gas",
+                           bus="Harbor_HV",
+                           p_nom=800,
+                           marginal_cost=50,
+                           ramp_limit_up=100,
+                           ramp_limit_down=100)
         
         # Solar farms (variable output based on time)
-        self.network.add("Generator",
-                       "LAX_Solar",
-                       bus="LAX_HV",
-                       p_nom=200,
-                       marginal_cost=0,
-                       p_max_pu=self._solar_profile())
+        if "LAX_HV" in self.network.buses.index:
+            self.network.add("Generator",
+                           "LAX_Solar",
+                           bus="LAX_HV",
+                           p_nom=200,
+                           marginal_cost=0,
+                           p_max_pu=self._solar_profile())
         
         # Wind (offshore)
-        self.network.add("Generator",
-                       "Harbor_Wind",
-                       bus="Harbor_HV",
-                       p_nom=150,
-                       marginal_cost=0,
-                       p_max_pu=self._wind_profile())
+        if "Harbor_HV" in self.network.buses.index:
+            self.network.add("Generator",
+                           "Harbor_Wind",
+                           bus="Harbor_HV",
+                           p_nom=150,
+                           marginal_cost=0,
+                           p_max_pu=self._wind_profile())
         
         # Peaker plants for demand response
         for zone in ["DTLA", "Vernon"]:
-            self.network.add("Generator",
-                           f"{zone}_Peaker",
-                           bus=f"{zone}_HV",
-                           p_nom=100,
-                           marginal_cost=150,  # Expensive peaker
-                           ramp_limit_up=50)
+            bus_name = f"{zone}_HV"
+            if bus_name in self.network.buses.index:
+                self.network.add("Generator",
+                               f"{zone}_Peaker",
+                               bus=bus_name,
+                               p_nom=100,
+                               marginal_cost=150,  # Expensive peaker
+                               ramp_limit_up=50)
     
     def _add_base_loads(self):
         """Add base loads for each zone"""
@@ -178,10 +191,12 @@ class EnhancedSUMOPyPSAIntegration:
         }
         
         for zone, load in base_loads.items():
-            self.network.add("Load",
-                           f"Load_{zone}",
-                           bus=f"{zone}_MV",
-                           p_set=load)
+            bus_name = f"{zone}_MV"
+            if bus_name in self.network.buses.index:
+                self.network.add("Load",
+                               f"Load_{zone}",
+                               bus=bus_name,
+                               p_set=load)
     
     def _solar_profile(self):
         """Generate realistic solar generation profile"""
@@ -328,50 +343,157 @@ class EnhancedSUMOPyPSAIntegration:
         
         total_charging_power = 0
         
-        # Identify EVs (simplified - in reality would track specific vehicles)
-        num_evs = int(len(vehicles) * EV_PERCENTAGE)
-        
-        for station in self.charging_config:
-            station_id = station['id']
+        # Track actual EV positions if SUMO is running
+        try:
+            import traci
             
-            # Check vehicles near station
-            vehicles_at_station = min(
-                np.random.poisson(2),  # Random arrivals
-                station['capacity']
-            )
-            
-            if vehicles_at_station > 0:
-                # Determine charging rate based on grid state
-                if self.grid_state == GridState.NORMAL:
-                    if station['type'] == 'level_3_dc':
-                        power_per_vehicle = self.ev_params['level_3_dc']
+            # Check if SUMO is connected
+            if traci.isLoaded():
+                # Process each charging station
+                for station in self.charging_config:
+                    station_id = station['id']
+                    station_lat = station['lat']
+                    station_lon = station['lon']
+                    vehicles_at_station = 0
+                    charging_vehicles = []
+                    
+                    # Check each vehicle's proximity to station
+                    for veh_id in vehicles:
+                        try:
+                            # Get vehicle position
+                            pos = traci.vehicle.getPosition(veh_id)
+                            if pos and pos[0] != -1073741824.0:
+                                # Convert to GPS coordinates
+                                gps_pos = traci.simulation.convertGeo(*pos)
+                                
+                                # Check if vehicle is an EV (based on hash or type)
+                                is_ev = False
+                                try:
+                                    veh_type = traci.vehicle.getTypeID(veh_id)
+                                    is_ev = 'electric' in veh_type.lower() or 'ev' in veh_type.lower()
+                                except:
+                                    # Fallback to hash-based determination
+                                    is_ev = hash(veh_id) % 100 < (EV_PERCENTAGE * 100)
+                                
+                                if not is_ev:
+                                    continue
+                                
+                                # Calculate distance to station (roughly 0.001 degrees = 100m)
+                                distance_lon = abs(gps_pos[0] - station_lon)
+                                distance_lat = abs(gps_pos[1] - station_lat)
+                                
+                                # Check if within charging range (about 50-100m)
+                                if distance_lon < 0.0005 and distance_lat < 0.0005:
+                                    # Check if vehicle is stopped or moving slowly (charging)
+                                    speed = traci.vehicle.getSpeed(veh_id)
+                                    if speed < 0.5:  # Nearly stopped (less than 0.5 m/s)
+                                        vehicles_at_station += 1
+                                        charging_vehicles.append(veh_id)
+                                        
+                                        # Stop counting if station is at capacity
+                                        if vehicles_at_station >= station['capacity']:
+                                            break
+                        except Exception as e:
+                            continue
+                    
+                    # Calculate power consumption for this station
+                    if vehicles_at_station > 0:
+                        # Determine charging rate based on grid state
+                        if self.grid_state == GridState.NORMAL:
+                            if station['type'] == 'level_3_dc':
+                                power_per_vehicle = self.ev_params['level_3_dc']
+                            else:
+                                power_per_vehicle = self.ev_params['level_2_ac']
+                        elif self.grid_state == GridState.STRESSED:
+                            # Limit to Level 2 charging
+                            power_per_vehicle = min(
+                                self.ev_params['level_2_ac'],
+                                self.ev_params.get(station['type'], 20)
+                            )
+                        else:  # CRITICAL
+                            # Emergency charging only
+                            power_per_vehicle = self.ev_params['level_1_ac']
+                        
+                        # Calculate station power
+                        station_power = vehicles_at_station * power_per_vehicle * \
+                                    self.ev_params['efficiency']
+                        
+                        total_charging_power += station_power
+                        
+                        # Store station status
+                        if station_id not in self.charging_stations:
+                            self.charging_stations[station_id] = {}
+                        
+                        self.charging_stations[station_id].update({
+                            'vehicles_charging': vehicles_at_station,
+                            'power_consumption': station_power,
+                            'charging_rate': power_per_vehicle,
+                            'charging_vehicles': charging_vehicles,  # Track which vehicles
+                            'capacity_utilization': vehicles_at_station / station['capacity']
+                        })
                     else:
-                        power_per_vehicle = self.ev_params['level_2_ac']
-                elif self.grid_state == GridState.STRESSED:
-                    # Limit to Level 2 charging
-                    power_per_vehicle = min(
-                        self.ev_params['level_2_ac'],
-                        self.ev_params.get(station['type'], 20)
+                        # No vehicles at this station
+                        if station_id not in self.charging_stations:
+                            self.charging_stations[station_id] = {}
+                        
+                        self.charging_stations[station_id].update({
+                            'vehicles_charging': 0,
+                            'power_consumption': 0,
+                            'charging_rate': 0,
+                            'charging_vehicles': [],
+                            'capacity_utilization': 0
+                        })
+            else:
+                # Fallback to estimation if SUMO not connected
+                # Use simplified random estimation
+                num_evs = int(len(vehicles) * EV_PERCENTAGE)
+                
+                for station in self.charging_config:
+                    station_id = station['id']
+                    
+                    # Estimate vehicles at station based on EV count
+                    vehicles_at_station = min(
+                        np.random.poisson(max(1, num_evs // len(self.charging_config))),
+                        station['capacity']
                     )
-                else:  # CRITICAL
-                    # Emergency charging only
-                    power_per_vehicle = self.ev_params['level_1_ac']
-                
-                # Calculate station power
-                station_power = vehicles_at_station * power_per_vehicle * \
-                               self.ev_params['efficiency']
-                
-                total_charging_power += station_power
-                
-                # Store station status
-                if station_id not in self.charging_stations:
-                    self.charging_stations[station_id] = {}
-                
-                self.charging_stations[station_id].update({
-                    'vehicles_charging': vehicles_at_station,
-                    'power_consumption': station_power,
-                    'charging_rate': power_per_vehicle
-                })
+                    
+                    if vehicles_at_station > 0:
+                        # Determine charging rate based on grid state
+                        if self.grid_state == GridState.NORMAL:
+                            if station['type'] == 'level_3_dc':
+                                power_per_vehicle = self.ev_params['level_3_dc']
+                            else:
+                                power_per_vehicle = self.ev_params['level_2_ac']
+                        elif self.grid_state == GridState.STRESSED:
+                            power_per_vehicle = min(
+                                self.ev_params['level_2_ac'],
+                                self.ev_params.get(station['type'], 20)
+                            )
+                        else:  # CRITICAL
+                            power_per_vehicle = self.ev_params['level_1_ac']
+                        
+                        # Calculate station power
+                        station_power = vehicles_at_station * power_per_vehicle * \
+                                    self.ev_params['efficiency']
+                        
+                        total_charging_power += station_power
+                        
+                        # Store station status
+                        if station_id not in self.charging_stations:
+                            self.charging_stations[station_id] = {}
+                        
+                        self.charging_stations[station_id].update({
+                            'vehicles_charging': vehicles_at_station,
+                            'power_consumption': station_power,
+                            'charging_rate': power_per_vehicle,
+                            'charging_vehicles': [],
+                            'capacity_utilization': vehicles_at_station / station['capacity']
+                        })
+                        
+        except Exception as e:
+            self.logger.warning(f"Error calculating EV charging: {e}")
+            # Return minimal charging if error occurs
+            return 0.1
         
         return total_charging_power / 1000  # Convert to MW
     
@@ -390,7 +512,7 @@ class EnhancedSUMOPyPSAIntegration:
             load_name = f"Load_{zone}"
             if load_name in self.network.loads.index:
                 # Base load + traffic-dependent load
-                base_load = self.network.loads.at[load_name, 'p_set']
+                base_load = 100  # Base load MW
                 traffic_load = demand.total * factor
                 self.network.loads.at[load_name, 'p_set'] = base_load + traffic_load
     
@@ -398,15 +520,22 @@ class EnhancedSUMOPyPSAIntegration:
         """Run power flow analysis and determine grid state"""
         
         try:
-            # Set up snapshots
-            self.network.set_snapshots([pd.Timestamp.now()])
+            # Ensure we have snapshots
+            if len(self.network.snapshots) == 0:
+                self.network.set_snapshots([pd.Timestamp.now()])
             
             # Run optimal power flow
-            status = self.network.lopf(
-                solver_name='glpk',
-                pyomo=False,
-                keep_shadowprices=True
-            )
+            try:
+                status = self.network.lopf(
+                    solver_name='glpk',
+                    pyomo=False,
+                    keep_shadowprices=False  # Disable shadowprices to avoid issues
+                )
+                self.network_solved = True
+            except Exception as e:
+                self.logger.warning(f"Power flow solver failed: {e}")
+                # Use simplified analysis without optimization
+                self.network_solved = False
             
             # Analyze results
             grid_metrics = self._analyze_grid_state()
@@ -430,8 +559,9 @@ class EnhancedSUMOPyPSAIntegration:
             return {
                 'status': 'error',
                 'grid_state': GridState.NORMAL.value,
-                'metrics': {},
-                'response': None
+                'metrics': {'max_line_loading': 0.0},
+                'response': None,
+                'congestion_level': 0.0
             }
     
     def _analyze_grid_state(self) -> Dict:
@@ -442,28 +572,51 @@ class EnhancedSUMOPyPSAIntegration:
         max_loading = 0
         congested_lines = []
         
-        for line in self.network.lines.index:
-            flow = abs(self.network.lines_t.p0.at[self.network.snapshots[0], line])
-            capacity = self.network.lines.at[line, 's_nom']
-            
-            if capacity > 0:
-                loading = flow / capacity
-                line_loading[line] = loading
-                max_loading = max(max_loading, loading)
-                
-                if loading > 0.8:
-                    congested_lines.append(line)
+        # Only analyze if network has been solved
+        if self.network_solved and hasattr(self.network, 'lines_t') and hasattr(self.network.lines_t, 'p0'):
+            for line in self.network.lines.index:
+                try:
+                    flow = abs(self.network.lines_t.p0.at[self.network.snapshots[0], line])
+                    capacity = self.network.lines.at[line, 's_nom']
+                    
+                    if capacity > 0:
+                        loading = flow / capacity
+                        line_loading[line] = loading
+                        max_loading = max(max_loading, loading)
+                        
+                        if loading > 0.8:
+                            congested_lines.append(line)
+                except:
+                    # Skip if data not available for this line
+                    continue
+        else:
+            # Use estimated loading based on demand
+            if self.current_demand:
+                total_capacity = sum(zone['capacity_mw'] for zone in self.power_zones_config.values())
+                max_loading = self.current_demand.total / total_capacity if total_capacity > 0 else 0.0
         
         # Generation analysis
-        total_generation = self.network.generators_t.p.sum().sum()
-        renewable_generation = sum(
-            self.network.generators_t.p[gen].sum()
-            for gen in self.network.generators.index
-            if 'Solar' in gen or 'Wind' in gen
-        )
+        total_generation = 0
+        renewable_generation = 0
+        
+        if self.network_solved and hasattr(self.network, 'generators_t') and hasattr(self.network.generators_t, 'p'):
+            try:
+                total_generation = self.network.generators_t.p.sum().sum()
+                renewable_generation = sum(
+                    self.network.generators_t.p[gen].sum()
+                    for gen in self.network.generators.index
+                    if 'Solar' in gen or 'Wind' in gen
+                )
+            except:
+                pass
         
         # Cost analysis
-        marginal_cost = self.network.buses_t.marginal_price.mean().mean()
+        marginal_cost = 50.0  # Default marginal cost
+        if self.network_solved and hasattr(self.network, 'buses_t') and hasattr(self.network.buses_t, 'marginal_price'):
+            try:
+                marginal_cost = self.network.buses_t.marginal_price.mean().mean()
+            except:
+                pass
         
         return {
             'max_line_loading': max_loading,
@@ -545,37 +698,43 @@ class EnhancedSUMOPyPSAIntegration:
     def apply_demand_response(self, response: TrafficResponse):
         """Apply demand response measures to traffic system"""
         
-        if response.traffic_light_mode == "eco":
-            # Reduce phase durations to save power
-            self._apply_eco_traffic_lights()
-        elif response.traffic_light_mode == "emergency":
-            # Switch to flashing yellow on minor roads
-            self._apply_emergency_traffic_lights(response.affected_intersections)
-        elif response.traffic_light_mode == "flashing_red":
-            # All lights to flashing red (4-way stop)
-            self._apply_blackout_traffic_lights()
-        
-        # Apply street light dimming
-        self._apply_street_light_dimming(response.street_light_dimming)
-        
-        # Apply EV charging limits
-        self._apply_ev_charging_limits(response.ev_charging_limit)
+        try:
+            if response.traffic_light_mode == "eco":
+                # Reduce phase durations to save power
+                self._apply_eco_traffic_lights()
+            elif response.traffic_light_mode == "emergency":
+                # Switch to flashing yellow on minor roads
+                self._apply_emergency_traffic_lights(response.affected_intersections)
+            elif response.traffic_light_mode == "flashing_red":
+                # All lights to flashing red (4-way stop)
+                self._apply_blackout_traffic_lights()
+            
+            # Apply street light dimming
+            self._apply_street_light_dimming(response.street_light_dimming)
+            
+            # Apply EV charging limits
+            self._apply_ev_charging_limits(response.ev_charging_limit)
+        except Exception as e:
+            self.logger.warning(f"Could not apply demand response: {e}")
     
     def _apply_eco_traffic_lights(self):
         """Apply eco mode to traffic lights"""
         try:
             for tl_id in self.traffic_lights:
-                # Get current program
-                current_program = traci.trafficlight.getProgram(tl_id)
-                
-                # Reduce green phase durations by 20%
-                phases = traci.trafficlight.getAllProgramLogics(tl_id)
-                if phases:
-                    logic = phases[0]
-                    for phase in logic.getPhases():
-                        phase.duration = int(phase.duration * 0.8)
+                try:
+                    # Get current program
+                    current_program = traci.trafficlight.getProgram(tl_id)
                     
-                    traci.trafficlight.setProgramLogic(tl_id, logic)
+                    # Reduce green phase durations by 20%
+                    phases = traci.trafficlight.getAllProgramLogics(tl_id)
+                    if phases:
+                        logic = phases[0]
+                        for phase in logic.getPhases():
+                            phase.duration = int(phase.duration * 0.8)
+                        
+                        traci.trafficlight.setProgramLogic(tl_id, logic)
+                except:
+                    continue
                     
         except Exception as e:
             self.logger.warning(f"Could not apply eco mode: {e}")
@@ -584,10 +743,13 @@ class EnhancedSUMOPyPSAIntegration:
         """Apply emergency mode to critical intersections"""
         try:
             for tl_id in affected_intersections:
-                # Set to flashing yellow
-                state = traci.trafficlight.getRedYellowGreenState(tl_id)
-                yellow_state = 'y' * len(state)
-                traci.trafficlight.setRedYellowGreenState(tl_id, yellow_state)
+                try:
+                    # Set to flashing yellow
+                    state = traci.trafficlight.getRedYellowGreenState(tl_id)
+                    yellow_state = 'y' * len(state)
+                    traci.trafficlight.setRedYellowGreenState(tl_id, yellow_state)
+                except:
+                    continue
                 
         except Exception as e:
             self.logger.warning(f"Could not apply emergency mode: {e}")
@@ -596,9 +758,12 @@ class EnhancedSUMOPyPSAIntegration:
         """Apply blackout mode - all lights flashing red"""
         try:
             for tl_id in self.traffic_lights:
-                state = traci.trafficlight.getRedYellowGreenState(tl_id)
-                red_state = 'r' * len(state)
-                traci.trafficlight.setRedYellowGreenState(tl_id, red_state)
+                try:
+                    state = traci.trafficlight.getRedYellowGreenState(tl_id)
+                    red_state = 'r' * len(state)
+                    traci.trafficlight.setRedYellowGreenState(tl_id, red_state)
+                except:
+                    continue
                 
         except Exception as e:
             self.logger.warning(f"Could not apply blackout mode: {e}")
@@ -703,37 +868,63 @@ class EnhancedSUMOPyPSAIntegration:
     def _get_transmission_status(self) -> List[Dict]:
         """Get status of transmission lines"""
         lines = []
-        for line in self.network.lines.index:
-            if hasattr(self.network.lines_t, 'p0'):
-                flow = abs(self.network.lines_t.p0.at[self.network.snapshots[0], line])
-                capacity = self.network.lines.at[line, 's_nom']
-                loading = flow / capacity if capacity > 0 else 0
-                
+        
+        # Only try to get flow data if network has been solved
+        if self.network_solved and hasattr(self.network, 'lines_t') and hasattr(self.network.lines_t, 'p0'):
+            for line in self.network.lines.index:
+                try:
+                    # Safely try to get flow data
+                    if self.network.snapshots[0] in self.network.lines_t.p0.index:
+                        flow = abs(self.network.lines_t.p0.at[self.network.snapshots[0], line])
+                    else:
+                        flow = 0
+                    
+                    capacity = self.network.lines.at[line, 's_nom']
+                    loading = flow / capacity if capacity > 0 else 0
+                    
+                    lines.append({
+                        'id': line,
+                        'from': self.network.lines.at[line, 'bus0'],
+                        'to': self.network.lines.at[line, 'bus1'],
+                        'flow': flow,
+                        'capacity': capacity,
+                        'loading': loading,
+                        'congested': loading > 0.8
+                    })
+                except Exception as e:
+                    # Skip lines that have issues
+                    self.logger.debug(f"Could not get status for line {line}: {e}")
+                    continue
+        else:
+            # Return basic line info without flow data
+            for line in self.network.lines.index:
                 lines.append({
                     'id': line,
                     'from': self.network.lines.at[line, 'bus0'],
                     'to': self.network.lines.at[line, 'bus1'],
-                    'flow': flow,
-                    'capacity': capacity,
-                    'loading': loading,
-                    'congested': loading > 0.8
+                    'flow': 0,
+                    'capacity': self.network.lines.at[line, 's_nom'],
+                    'loading': 0,
+                    'congested': False
                 })
         
         return lines
     
     def _get_renewable_percentage(self) -> float:
         """Calculate current renewable generation percentage"""
-        if not hasattr(self.network.generators_t, 'p'):
-            return 0.0
-        
-        total_gen = self.network.generators_t.p.sum().sum()
-        renewable_gen = sum(
-            self.network.generators_t.p[gen].sum()
-            for gen in self.network.generators.index
-            if 'Solar' in gen or 'Wind' in gen
-        )
-        
-        return (renewable_gen / total_gen * 100) if total_gen > 0 else 0.0
+        if self.network_solved and hasattr(self.network, 'generators_t') and hasattr(self.network.generators_t, 'p'):
+            try:
+                total_gen = self.network.generators_t.p.sum().sum()
+                renewable_gen = sum(
+                    self.network.generators_t.p[gen].sum()
+                    for gen in self.network.generators.index
+                    if 'Solar' in gen or 'Wind' in gen
+                )
+                
+                return (renewable_gen / total_gen * 100) if total_gen > 0 else 0.0
+            except:
+                return 0.0
+        return 0.0
     
     def _get_current_congestion(self) -> float:
         """Get current grid congestion level"""
@@ -753,4 +944,6 @@ class EnhancedSUMOPyPSAIntegration:
                 'street_lights': demand.street_lights,
                 'ev_charging': demand.ev_charging
             })
+            
         return summary
+        
